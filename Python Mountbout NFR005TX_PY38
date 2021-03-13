@@ -1,0 +1,1431 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Aug 16 13:05:33 2020 for python 3.8
+@author: Eelke Snoeren
+
+This script will automaticaly analyze mountbout data from rawdata files
+from Noldus observer XT12.5. It will save an excel sheet with the results
+- It is made specially for the cohort from Texas
+- It gives all information of all mount bouts combined
+
+TO DO BEFOREHAND
+1) Save a copy of the script in your project folder
+2) CHANGE THE PATH OF PYTHON TO YOUR DATA FOLDER AND CHANGE THE OUTPATH
+3) CHANGE THE FILENAME TO THE RIGHT DOCUMENT
+4) CREATE A TREATMENT FILE
+5) FILL IN TREATMENT GROUPS 
+6) FILL IN THE TREATMENT NAME FOR EACH WEEK (e.g. ip1, ip2, ic1, ic2, ic3))
+7) FILL IN TEST TIME
+8) CHECK THE BEHAVIORS AND BEHAVIORAL PARAMETERS THAT WERE CALCULATED
+9) CHECK WHETHER THE EXCEL OUTPUT IS THE SAME
+10) CHECK WHETHER THE SHEETS HAVE SIMILAR NAMES
+"""
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from itertools import chain
+sns.set()
+from PIL import Image
+import glob
+import os
+from matplotlib.backends.backend_pdf import PdfPages
+import multiprocessing as mp
+from pandas import ExcelWriter
+import openpyxl
+pd.set_option('use_inf_as_na', True)
+
+
+# HOME- Define the directory in which you stored the data (use / instead of \)
+directory= "C:/Users/esn001/Documents/Python 3.8/Data projects/Patty mountbout"
+directory_stat= "C:/Users/esn001/Documents/Python 3.8/Data projects/Patty mountbout/Output"
+
+# # WORK- Define the directory in which you stored the data (use / instead of \)
+# directory= "C:/Users/esn001/OneDrive - UiT Office 365/python/Python 3.8/Data projects/Patty mountbout"
+# directory_stat= "C:/Users/esn001/OneDrive - UiT Office 365/python/Python 3.8/Data projects/Patty mountbout/Output"
+
+# Assign spreadsheet filename to `file`
+file1 = 'NFR005TX_BL2_rawdata.xlsx'
+file2 = 'NFR005TX_T1T2T3_rawdata.xlsx'
+file3 = 'NFR005TX _T4T5_rawdata.xlsx'
+file_treatment = 'NFR005TX_Treatments.xlsx'
+file_stat = "%s/NFR005TX_mountbout_statistics.xlsx" % directory_stat
+
+# Define the directory from which the files should come
+os.chdir(directory)
+
+# Define output file names
+out_path1 = "%s/Output/NFR005TX_mountbout_results.xlsx" % directory
+out_path2 = "%s/Output/NFR005TX_mountbout_statistics.xlsx" % directory
+out_path3 = "%s/Output/NFR005TX_mountbout_testresults.xlsx" % directory
+
+# Fill in treatment weeks
+Treatment1 = 'BL2'
+Treatment2 = 'Test1'
+Treatment3 = 'Test2'
+Treatment4 = 'Test3'
+Treatment5 = 'Test4'
+Treatment6 = 'Test5'
+
+# Fill in time test
+Timetest = 1800
+
+# Load and clean up of the data file of the rawdata for DataFrames
+xlsx_data = pd.ExcelFile(file1)
+file_sheets_data = []
+for sheet in xlsx_data.sheet_names:
+    file_sheets_data.append(xlsx_data.parse(sheet))
+xlsx_data = pd.ExcelFile(file2)
+for sheet in xlsx_data.sheet_names:
+    file_sheets_data.append(xlsx_data.parse(sheet))
+xlsx_data = pd.ExcelFile(file3)
+for sheet in xlsx_data.sheet_names:
+    file_sheets_data.append(xlsx_data.parse(sheet))
+
+dataraw = pd.concat(file_sheets_data)
+dataraw = dataraw.dropna(axis=0, how='all')
+
+# Load and clean up of the data file of the viruscode for DataFrames
+xlsx_treatment = pd.ExcelFile(file_treatment)
+file_sheets_treatment = []
+for sheet in xlsx_treatment.sheet_names:
+    file_sheets_treatment.append(xlsx_treatment.parse(sheet))
+treatmentcodes = pd.concat(file_sheets_treatment)
+treatmentcodes = treatmentcodes.dropna(axis=0, how='all')
+
+# Make dictionary from the treatmentcodes dataframe
+dict_test1 = dict(zip(treatmentcodes['RatID'], treatmentcodes['BL2']))
+dict_test2 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 1']))
+dict_test3 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 2']))
+dict_test4 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 3']))
+dict_test5 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 4']))
+dict_test6 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 5']))
+   
+# Fill out your short column names behind the definition a-z
+A='Index'
+B='Date_Time_Absolute_dmy_hmsf'
+C='Date_dmy'
+D='Time_Absolute_hms'
+E='Time_Absolute_f'
+F='Time_Relative_hmsf'
+G='Time_Relative_hms'
+H='Time_Relative_f'
+I='Time_Relative_sf' # Time
+J='Duration_sf'
+K='Observation'
+L='Event_Log'
+M='Behavior'
+N='Event_Type'
+
+# For the rest of the document we will use these new terms for the "important behaviors"
+TIME='Time'
+OBS='Observation'
+BEH='Behavior'
+EVENT='Event_Type'
+RATID='RatID' # RatID number with virus code
+RATIDRAW='RatID_raw' # number during experiment for blinding
+TREAT='Treatment'
+VIRUS='Virus'
+EXP='Experiment'
+
+# Fill out your treatment/stimulus behind definition SA-SZ
+SA='Baseline'
+SB='Saline'
+SC='Low dose'
+SD='High dose'
+SE='Highest dose'
+SF='nothing' 
+
+Stimuli_values= (SA,SB,SC,SD,SE,SF)
+
+# Fill out your behavioral observations behind definition BA-BZ and BSA-BSZ
+BA='Mount'
+BB='Intromission'
+BC='Ejaculation'
+BD='Clasping'
+BE='Genital grooming'
+BF='Chasing'
+BG='Anogenital sniffing'
+BH='Head towards female'
+BI='Other grooming'
+BJ='Head not towards female'
+
+# Fill in your extra behavioral calculations behind definition EA-EZ
+EA='copulations' # mounts, intromissions and ejaculations
+EB='PEI' # post-ejaculatory interval - Time from ejaculation to first mount/intromission
+EC='IMBI' # Inter-mount-bout interval - Time from first mount of mountbout to first mount of next mountbout
+ED='TO' # Time-out - Interval from the last mount of mountbout to the first mount of next mountbout
+EE='Copulation-oriented behavior' # EA+BD+BE+BF+BG
+EF='Female-oriented behavior' # EE+BH
+EG='Non copulation-oriented behavior' # BI+BJ
+
+# Make a list of the standard behaviors and the to be calculated behaviors
+list_sex=list((BA,BB,BC))
+list_behaviors=list((BA,BB,BC,BD,BE,BF,BG,BH,BI,BJ))
+list_other_behaviors=list((BD,BE,BF,BG,BH,BI,BJ))
+list_behaviors_extra=list((EA,EB,EC,ED,EE,EF,EG))
+
+# Rename columns (add or remove letters according to number of columns)
+dataraw.columns = [B,C,D,E,F,G,H,I,J,K,L,M,N]
+dataraw.columns=[B,C,D,E,F,G,H,TIME,J,OBS,L,BEH,EVENT]
+
+# Make a new datafile with selected columns
+data_full=dataraw[[TIME,OBS,BEH,EVENT]]
+
+# Make a column for the experiment and RatID_raw (this is the number used for the rats)
+data_full=data_full.assign(Experiment =lambda x: data_full.Observation.str.split('_').str[1])
+data_full=data_full.assign(RatID =lambda x: data_full.Observation.str.split('_').str[-1])
+
+# # Make a column for the RatID
+# data_full[RATID]=pd.to_numeric(data_full[RATID])
+# data_full[RATID]=data_full[RATID].map(dict_ratid)
+     
+# Make a column for the treatment week 1
+data_full['Treatment1']=pd.to_numeric(data_full[RATID])
+data_full['Treatment1']=data_full['Treatment1'].map(dict_test1)
+
+# Make a column for the treatment week 2
+data_full['Treatment2']=pd.to_numeric(data_full[RATID])
+data_full['Treatment2']=data_full['Treatment2'].map(dict_test2)
+
+# Make a column for the treatment week 3
+data_full['Treatment3']=pd.to_numeric(data_full[RATID])
+data_full['Treatment3']=data_full['Treatment3'].map(dict_test3)
+
+# Make a column for the treatment week 4
+data_full['Treatment4']=pd.to_numeric(data_full[RATID])
+data_full['Treatment4']=data_full['Treatment4'].map(dict_test4)
+
+# Make a column for the treatment week 5
+data_full['Treatment5']=pd.to_numeric(data_full[RATID])
+data_full['Treatment5']=data_full['Treatment5'].map(dict_test5)
+
+# Make a column for the treatment week 6
+data_full['Treatment6']=pd.to_numeric(data_full[RATID])
+data_full['Treatment6']=data_full['Treatment6'].map(dict_test6)
+
+# Make a column for the treatment
+data_full[TREAT]=np.where(data_full[EXP]==Treatment1, data_full['Treatment1'], '')
+data_full[TREAT]=np.where(data_full[EXP]==Treatment2, data_full['Treatment2'],data_full[TREAT])
+data_full[TREAT]=np.where(data_full[EXP]==Treatment3, data_full['Treatment3'],data_full[TREAT])
+data_full[TREAT]=np.where(data_full[EXP]==Treatment4, data_full['Treatment4'],data_full[TREAT])
+data_full[TREAT]=np.where(data_full[EXP]==Treatment5, data_full['Treatment5'],data_full[TREAT])
+data_full[TREAT]=np.where(data_full[EXP]==Treatment6, data_full['Treatment6'],data_full[TREAT])
+
+# Delete the rows that "end" a behavior
+# Drop a row by condition
+data_full=data_full[data_full.Event_Type != 'State stop']
+
+# Clean up the file by selecting relevant columns and reorganize
+# data_full=data_full.drop(columns=['Treatment1','Treatment2','Treatment3','Treatment4','Treatment5'])
+data_full=data_full[[OBS,EXP,RATID,TREAT,TIME,BEH]]
+
+data_full = data_full.sort_values(by=[OBS,TIME], ascending = True)
+
+# Calculate the durations of each behavior
+data_full= data_full.sort_values(by=[OBS,TIME])
+data_full['time_diff'] = data_full[TIME].diff()
+
+# Delete the times there were the RatID of next rat starts
+data_full.loc[data_full.RatID != data_full.RatID.shift(), 'time_diff'] = None
+
+# Mark beginning per rat
+data_full = data_full.sort_values(by=[OBS,TIME])
+data_full['obs_num'] = data_full.groupby(OBS)[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+data_full = data_full.sort_values(by=[OBS,TIME], ascending = False)
+data_full['obs_num_back'] = data_full.groupby(OBS)[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+data_full = data_full.sort_values(by=[OBS,TIME])
+
+# Correct time of behaviors by distracting time first behavior
+data_full['starttest']=np.where((data_full['obs_num']==1),data_full[TIME],np.NaN)
+data_full['starttest'].fillna(method = "ffill", inplace=True)
+
+# Now put the time differences to the right behavior in column 'durations'
+data_full['durations'] = data_full.time_diff.shift(-1)
+data_full['durations'] = np.where((data_full['obs_num_back']==1),1,data_full['durations'])
+
+data_full['durations_cor'] = data_full.durations.shift(-1)
+data_full['durations_cor']=np.where((data_full['obs_num_back']==1),np.NaN,data_full['durations_cor'])
+
+# Make a new column that makes an unique name for the behaviors per rat
+data_full['beh_num_trick'] = data_full[BEH].map(str) + data_full[OBS]
+
+# Number the behaviors per behavior per rat
+data_full['beh_num'] = data_full.groupby('beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+
+# Number the behaviors backwards
+data_full = data_full.sort_values(by=[OBS,TIME], ascending = False)
+data_full['beh_num_back'] = data_full.groupby('beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+data_full = data_full.sort_values(by=[OBS,TIME])
+
+# Number the ejaculation series per rat (with 10 as last series)
+data_full['ejac_serie']=np.where(data_full[BEH]==BC, data_full['beh_num'],np.NaN)
+data_full['ejac_serie1']=np.where(data_full['obs_num']==1, 10, data_full['ejac_serie'])
+
+# Number the ejaculation series per rat (with 10 as last series)
+data_full['ejac_serie2']=data_full['ejac_serie1']
+data_full['ejac_serie2'].fillna(method = "ffill", inplace=True)
+
+data_full['ejac_serie3']=data_full['ejac_serie1']+1
+
+# Make the first behavior belong to 1st ejaculatory series
+data_full['ejac_serie_filled_pre']=np.where(data_full[BEH]==BC, data_full['beh_num'],np.NaN)
+data_full['ejac_serie_filled_pre']=np.where(data_full['obs_num']==1, 10, data_full['ejac_serie_filled_pre'])
+data_full['ejac_serie_filled_pre'].fillna(method = "backfill", inplace=True)
+data_full['ejac_serie_filled_pre']=np.where(data_full['ejac_serie_filled_pre']>0.5,data_full['ejac_serie_filled_pre'],(data_full['ejac_serie2']+1))
+
+data_full['ejac_serie_filled_pre2']=np.where((data_full['ejac_serie_filled_pre'] + data_full['obs_num']==11), 1, 
+            data_full['ejac_serie_filled_pre'])
+data_full['ejac_serie_filled_pre2'].fillna(method = "ffill", inplace=True)
+
+# Correct ejac_serie_filled_pre to remove the 10
+data_full['ejac_serie_filled']=np.where(data_full['ejac_serie_filled_pre']==10, (data_full['ejac_serie2']+1),data_full['ejac_serie_filled_pre'])
+data_full['ejac_serie_filled']=np.where(data_full['ejac_serie_filled']==11, 1,data_full['ejac_serie_filled'])
+
+# Make sure the ejaculation comes in both serie dataframes
+data_full['ejac_serie_filled_extra']=np.where(data_full['ejac_serie3']==2, data_full['ejac_serie3'],data_full['ejac_serie_filled'])
+data_full['ejac_serie_filled_extra']=np.where(data_full['ejac_serie3']==3, data_full['ejac_serie3'],data_full['ejac_serie_filled_extra'])
+
+## Make new dataframes for each ejaculatory series
+data_all = data_full.copy()
+data_S1 = data_full.loc[(data_full['ejac_serie_filled'] == 1),:]
+data_S2 = data_full.loc[(data_full['ejac_serie_filled'] == 2),:]
+data_S3 = data_full.loc[(data_full['ejac_serie_filled'] == 3),:]
+data_S1_PEI = data_full.loc[(data_full['ejac_serie_filled_extra'] == 1),:]
+data_S2_PEI = data_full.loc[(data_full['ejac_serie_filled_extra'] == 2),:]
+data_S3_PEI = data_full.loc[(data_full['ejac_serie_filled_extra'] == 3),:]
+
+## Run the script for each dataframe
+# Create a dictionairy of dataframes
+# Loop the rest over the dataframes
+df_data={'S1':data_S1,'S2':data_S2,'S3':data_S3,'S1_PEI':data_S1_PEI,'S2_PEI':data_S2_PEI,'S3_PEI':data_S3_PEI,'all':data_all}
+
+def dataprep (data):
+    # def dataprep (data):
+    "This definition will prepare all columns that are later needed to retrieve the results"
+
+    # Mark beginning per rat
+    data['obs_num'] = data.groupby(OBS)[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    data = data.sort_values(by=[OBS,TIME], ascending = False)
+    data['obs_num_back'] = data.groupby(OBS)[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # Make a new column that makes an unique name for the behaviors per rat
+    data['beh_num_trick'] = data[BEH].map(str) + data[OBS]
+    
+    # Number the behaviors per behavior per rat
+    data['beh_num'] = data.groupby('beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    
+    # Number the behaviors backwards
+    data = data.sort_values(by=[OBS,TIME], ascending = False)
+    data['beh_num_back'] = data.groupby('beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # Mark the copulations (mount, intromission, ejaculation)
+    data['COP_mark']=np.where(((data[BEH]==BA) | (data[BEH]==BB) |(data[BEH]==BC)),1,np.NaN)
+    data['COP_marktime']=np.where(data['COP_mark']==1,data[TIME],np.NaN)
+    
+    # Mark the behaviors that would stop the mount bout ()
+    data['NONCOP_mark']=np.where(((data[BEH]==BI) | (data[BEH]==BJ) | (data[BEH]=='End mount bout')),1,np.NaN)
+    data['NONCOP_marktime']=np.where(data['NONCOP_mark']==1,data[TIME],np.NaN)
+
+    # # Correction for Patty's old script with marking Start mount bout times
+    # data['Start_MB_time']=np.where(data[BEH]=='Start mount bout',data[TIME],np.NaN)
+    # data['Start_MB_time'].fillna(method='ffill',inplace=True)
+    
+    # # Correction for Patty's old script with marking Start mount bout durations
+    # data['Start_MB_durations']=np.where(data[BEH]=='Start mount bout',data['durations'],np.NaN)
+    # data['Start_MB_durations'].fillna(method='ffill',inplace=True)
+    
+    # Make a column for bout end filled with 1 as long as a mount bout continues and a 2 when it would have ended
+    # Shift the column 1 up to mark the end of mountbout next to copulation
+    data['Bout_end_check']=np.where((data['obs_num'])==1,2,np.NaN)
+    data['Bout_end_check']=np.where((data['obs_num_back'])==1,2,data['Bout_end_check'])
+    data['Bout_end_check']=np.where((data['COP_mark'])==1,1,data['Bout_end_check'])
+    data['Bout_end_check']=np.where((data['NONCOP_mark'])==1,2,data['Bout_end_check'])
+    data['Bout_end_check'].fillna(method="backfill", inplace=True)
+    data['Bout_end_check']=data['Bout_end_check'].shift(-1)
+    
+    # Make a column for bout start filled with 1 as long as a mount bout continues and a 2 when it would have started
+    # Shift the column 1 down to mark the end of mountbout next to copulation
+    data['Bout_start_check']=np.where((data['obs_num'])==1,2,np.NaN)
+    data['Bout_start_check']=np.where((data['obs_num_back'])==1,2,data['Bout_start_check'])
+    data['Bout_start_check']=np.where((data['COP_mark'])==1,1,data['Bout_start_check'])
+    data['Bout_start_check']=np.where((data['NONCOP_mark'])==1,2,data['Bout_start_check'])
+    data['Bout_start_check']=np.where((data[BEH])==BC,2,data['Bout_start_check'])
+    data['Bout_start_check'].fillna(method="ffill", inplace=True)
+    data['Bout_start_check']=data['Bout_start_check'].shift(1)
+    
+    # Mark begin, end or single mount bouts
+    data['Mount_bout_mark']=np.where(((data['COP_mark']==1) & (data['Bout_start_check']==2) 
+                                            & (data['Bout_end_check']==2)),"Single copulation","")
+    data['Mount_bout_mark']=np.where(((data['COP_mark']==1) & (data['Bout_start_check']==2) 
+                                            & (data['Bout_end_check']==1)),"Start mount bout",data['Mount_bout_mark'])
+    data['Mount_bout_mark']=np.where(((data['COP_mark']==1) & (data['Bout_start_check']==1) 
+                                            & (data['Bout_end_check']==2)),"End mount bout",data['Mount_bout_mark'])
+    data['Mount_bout_mark']=np.where(((data['Mount_bout_mark']=="Start mount bout") & (data[BEH]==BC)), 
+                                            "Single copulation",data['Mount_bout_mark'])
+
+    # # Correction old script Patty by correcting time of 1st copulation in mount bout 
+    # data[TIME]=np.where(((data['Mount_bout_mark']=='Single copulation')|(data['Mount_bout_mark']=='Start mount bout')),data['Start_MB_time'],data[TIME])
+    # data['durations'] = np.where(((data['Mount_bout_mark']=='Single copulation')|(data['Mount_bout_mark']=='Start mount bout')),(data['Start_MB_durations']+data['durations']),data['durations'])
+    
+    # Mark each Start mount bout 
+    data['Mount_bout_count_exclsingle']=np.where((data['Mount_bout_mark']=="Start mount bout"),1,np.NaN)
+    data['Mount_bout_count']=np.where(((data['Mount_bout_mark']=="Start mount bout")|(data['Mount_bout_mark']=="Single copulation")),1,np.NaN)
+    
+    ### Contains correction old script Patty
+    # Mark the time of the start and end of each mount bout
+    data['Time_start_mount_bout_exclsingle']=np.where(data['Mount_bout_count_exclsingle']==1,data[TIME],np.NaN)
+    data['Time_start_mount_bout']=np.where(data['Mount_bout_count']==1,data[TIME],np.NaN)
+    data['Time_end_mount_bout_exclsingle']=np.where(data['Mount_bout_mark']=="End mount bout",data[TIME],np.NaN)
+    data['Time_end_mount_bout']=np.where(((data['Mount_bout_mark']=="End mount bout")|(data['Mount_bout_mark']=="Single copulation")),(data[TIME]+data['durations']),np.NaN)
+    # data['Time_end_mount_bout']=np.where((data['Mount_bout_mark']=="End mount bout"),(data['Time_end_mount_bout']+data['durations']),data['Time_end_mount_bout'])
+    
+    data['Time_start_mount_bout']=np.where(data['obs_num']==1,99999,data['Time_start_mount_bout'])
+    data['Time_start_mount_bout'].fillna(method="backfill", inplace=True)
+    data['Time_start_mount_bout']=np.where(data['Time_start_mount_bout']==99999,np.NaN,data['Time_start_mount_bout'])
+    
+    data['Time_start_mount_bout_exclsingle']=np.where(data['obs_num']==1,99999,data['Time_start_mount_bout_exclsingle'])
+    data['Time_start_mount_bout_exclsingle'].fillna(method="backfill", inplace=True)
+    data['Time_start_mount_bout_exclsingle']=np.where(data['Time_start_mount_bout_exclsingle']==99999,np.NaN,data['Time_start_mount_bout_exclsingle'])
+    
+    data['Time_end_mount_bout']=np.where(data['obs_num']==1,99999,data['Time_end_mount_bout'])
+    data['Time_end_mount_bout'].fillna(method="backfill", inplace=True)
+    data['Time_end_mount_bout']=np.where(data['Time_end_mount_bout']==99999,np.NaN,data['Time_end_mount_bout'])
+    
+    data['Time_end_mount_bout_exclsingle']=np.where(data['obs_num']==1,99999,data['Time_end_mount_bout_exclsingle'])
+    data['Time_end_mount_bout_exclsingle'].fillna(method="backfill", inplace=True)
+    data['Time_end_mount_bout_exclsingle']=np.where(data['Time_end_mount_bout_exclsingle']==99999,np.NaN,data['Time_end_mount_bout_exclsingle'])
+    
+    
+    # Get the duration of the mount bout, marked next to the start of the mount bout
+    data['Duration_mount_bout']=np.where((data['Mount_bout_mark']=="Start mount bout")|(data['Mount_bout_mark']=="Single copulation"),
+                                              ((data['Time_end_mount_bout'])-(data['Time_start_mount_bout'])),np.NaN)
+    data['Duration_mount_bout']=np.where((data['Duration_mount_bout']==0),data['durations'],data['Duration_mount_bout'])
+    
+    
+    data['Duration_mount_bout_exclsingle']=np.where(data['Mount_bout_mark']=="Start mount bout",
+                                              ((data['Time_end_mount_bout_exclsingle'])-(data['Time_start_mount_bout_exclsingle'])),np.NaN)
+    
+    # Get column with the start of next mount bout
+    data['Start_next_MB']=data['Time_start_mount_bout'].shift(-1)
+    
+    # Get the duration of the time out
+    data['Duration_time_out']=np.where(((data['Mount_bout_mark']=="End mount bout")|(data['Mount_bout_mark']=="Single copulation")),
+                                              (data['Start_next_MB']-(data['Time_end_mount_bout'])),np.NaN)
+    
+    # Count the mount bouts
+    data['OBS_MB_count'] = data['Mount_bout_count'].map(str) + data[OBS] 
+    data['Mount_bout_num'] = data.groupby('OBS_MB_count')['Mount_bout_count'].transform(lambda x: np.arange(1, len(x) + 1))
+    
+    # Mark the behaviors in the mount bouts with the number of the mount bout and 555 for single copulation
+    data['Mount_bout']=np.where((data['Mount_bout_mark']=="Start mount bout"),data['Mount_bout_num'],np.NaN)
+    data['Mount_bout']=np.where((data['Mount_bout_mark']=="End mount bout"),99999,data['Mount_bout'])
+    data['Mount_bout'].fillna(method="ffill", inplace=True)
+    data['Mount_bout']=np.where((data['Mount_bout_mark']=="End mount bout"), np.NaN,data['Mount_bout'])
+    data['Mount_bout'].fillna(method="ffill", inplace=True)                                
+    data['Mount_bout']=np.where((data['Mount_bout']==99999),np.NaN,data['Mount_bout'])
+    
+    data['Mount_bout']=np.where((data['Mount_bout_mark']=="Single copulation"),555,data['Mount_bout'])
+    
+    # Calculate the interval between the start of mount bouts
+    data['Interval_MB']=np.where((data['Duration_mount_bout']>0),(data['Start_next_MB']-data['Time_start_mount_bout']),np.NaN)
+    
+    # Make a new column that makes an unique name for the behaviors per rat per ejac serie
+    data['beh_num_trick_serie'] = data[BEH].map(str) + data[OBS] + data['ejac_serie_filled'].map(str)
+    
+    # Number the behaviors per behavior per rat
+    data['beh_num_serie'] = data.groupby('beh_num_trick_serie')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    
+    # Number the behaviors backwards
+    data = data.sort_values(by=[OBS,TIME], ascending = False)
+    data['beh_num_back_serie'] = data.groupby('beh_num_trick_serie')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # Mark PEI period in dataset from first behavior
+    data['PEIB_start_mark']=np.where((data[BEH])==BC,20,np.NaN)
+    data['PEIB_start_mark']=np.where(((data['beh_num_serie']==1)&(data[BEH]==BA)),1,data['PEIB_start_mark'])
+    data['PEIB_start_mark']=np.where(((data['beh_num_serie']==1)&(data[BEH]==BB)),1,data['PEIB_start_mark'])
+    data['PEIB_start_mark']=np.where((data['obs_num_back'])==BC,1,data['PEIB_start_mark'])
+    data['PEIB_start_mark'].fillna(method = "ffill", inplace=True)
+    
+    data['PEIB_end_mark']=data['PEIB_start_mark'].shift(1)
+    
+    data['PEIB_mark']=np.where(((data['PEIB_start_mark']==20)|(data['PEIB_end_mark']==20)),1,np.NaN)
+    
+    # Mark PEI period in dataset from first intromission
+    data['PEII_start_mark']=np.where((data[BEH])==BC,20,np.NaN)
+    data['PEII_start_mark']=np.where(((data['beh_num_serie']==1)&(data[BEH]==BB)),1,data['PEII_start_mark'])
+    data['PEII_start_mark']=np.where((data['obs_num_back'])==BC,1,data['PEII_start_mark'])
+    data['PEII_start_mark'].fillna(method = "ffill", inplace=True)
+    
+    data['PEII_end_mark']=data['PEII_start_mark'].shift(1)
+    
+    data['PEII_mark']=np.where(((data['PEII_start_mark']==20)|(data['PEII_end_mark']==20)),1,np.NaN)
+    
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # cut off the behavior before the first mount or intromission
+    data['precop_mark']=np.where((data['COP_mark']==1),2,np.NaN)
+    data['precop_mark']=np.where((data['obs_num_back']==1),2,data['precop_mark'])
+    data['precop_mark']=np.where((data['obs_num']==1),1,data['precop_mark'])
+    data['precop_mark'].fillna(method="ffill", inplace =True)
+
+    return data
+    
+for key in df_data.keys():
+    df_data[key]=dataprep(df_data[key])
+
+print("dataprep finished")    
+
+# # Save the dataframes to excel for check
+# writer5 = pd.ExcelWriter(out_path3, engine='xlsxwriter')
+# df_data['S1'].to_excel(writer5, sheet_name='data_test')
+# writer5.save()
+# writer5.close()
+
+# Create new dataframes for data with columns observation, ratID, Treatment, Virus, Experiment
+results = data_full[[OBS,RATID,TREAT,EXP,'starttest']]
+results = results.drop_duplicates(subset=[OBS], keep='first')
+results = results.set_index(OBS)   
+     
+# Fill dataframe with new values found in data dataframe
+# Therefore loop over the key-dataframes to get the right series data
+
+for key in df_data.keys():
+    # Get latency of each sex behavior of total test
+    for b in list_sex:
+        df_data[key]['L1 %s'% b]=np.where(((df_data[key][BEH]==b)&(df_data[key]['beh_num']==1)),df_data[key][TIME], np.NaN)
+        value = df_data[key].groupby(OBS)['L1 %s'% b].max()
+        results['%s L1 %s'% (key,b)]=value
+
+    # Get latency to first behavior
+    results['%s L1 B'%key]=np.where(((results['%s L1 %s'% (key,BA)])<(results['%s L1 %s'% (key,BB)])),results['%s L1 %s'% (key,BA)],results['%s L1 %s'% (key,BB)])
+
+# Fix the latency to 1st behavior
+results['all L1 %s'% BC].fillna(Timetest, inplace=True)
+results['S1 L1 %s'% BC].fillna(Timetest, inplace=True)
+results['S1 L1 %s'% BA].fillna(0, inplace=True)
+results['S1 L1 %s'% BB].fillna(0, inplace=True)
+results['S1 L1 B'].fillna(0, inplace=True)
+results['S2 L1 %s'% BA].fillna(0, inplace=True)
+results['S2 L1 %s'% BB].fillna(0, inplace=True)
+results['S2 L1 B'].fillna(0, inplace=True)
+results['S3 L1 %s'% BA].fillna(0, inplace=True)
+results['S3 L1 %s'% BB].fillna(0, inplace=True)
+results['S3 L1 B'].fillna(0, inplace=True)
+
+results['S1 L1 B']=np.where(results['S1 L1 B']==0,((results['S1 L1 %s'% BA])+(results['S1 L1 %s'% BB])),results['S1 L1 B'])
+results['S1 L1 B']=np.where(results['S1 L1 B']==0,np.NaN,results['S1 L1 B'])
+results['S1 L1 %s'% BA]=np.where(results['S1 L1 %s'% BA]==0,np.NaN,results['S1 L1 %s'% BA])
+results['S1 L1 %s'% BB]=np.where(results['S1 L1 %s'% BB]==0,np.NaN,results['S1 L1 %s'% BB])
+results['S2 L1 B']=np.where(results['S2 L1 B']==0,((results['S2 L1 %s'% BA])+(results['S2 L1 %s'% BB])),results['S2 L1 B'])
+results['S2 L1 B']=np.where(results['S2 L1 B']==0,np.NaN,results['S2 L1 B'])
+results['S2 L1 %s'% BA]=np.where(results['S2 L1 %s'% BA]==0,np.NaN,results['S2 L1 %s'% BA])
+results['S2 L1 %s'% BB]=np.where(results['S2 L1 %s'% BB]==0,np.NaN,results['S2 L1 %s'% BB])
+results['S3 L1 B']=np.where(results['S3 L1 B']==0,((results['S3 L1 %s'% BA])+(results['S3 L1 %s'% BB])),results['S3 L1 B'])
+results['S3 L1 B']=np.where(results['S3 L1 B']==0,np.NaN,results['S3 L1 B'])
+results['S3 L1 %s'% BA]=np.where(results['S3 L1 %s'% BA]==0,np.NaN,results['S3 L1 %s'% BA])
+results['S3 L1 %s'% BB]=np.where(results['S3 L1 %s'% BB]==0,np.NaN,results['S3 L1 %s'% BB])
+
+for key in df_data.keys():
+    # Get latency to ejaculation from 1st behavior
+    results['%s L1 EB'%key]=results['%s L1 %s'%(key,BC)]-results['%s L1 B'%key]
+    # Get latency to ejaculation from 1st intromission
+    results['%s L1 EI'%key]=results['%s L1 %s'%(key,BC)]-results['%s L1 %s'%(key,BB)]
+
+    # Get number of behaviors of total test
+    for b in list_behaviors:
+        df_data[key]['TN %s' %b]=np.where(((df_data[key][BEH]==b) & (df_data[key]['beh_num']==1)), df_data[key]['beh_num_back'],0)
+        value = df_data[key].groupby(OBS)['TN %s' %b].max()
+        results['%s TN %s' %(key,b)]=value
+   
+    # Correct Latency to ejaculation if no ejaculation
+    results['%s L1 EB'%key]=np.where(results['%s TN %s' %(key,BC)]==0,1800,results['%s L1 EB'%key])
+    results['%s L1 EI'%key]=np.where(results['%s TN %s' %(key,BC)]==0,1800,results['%s L1 EI'%key])
+    
+    # Get time spent on behaviors of total test
+    for b in list_behaviors:
+        df_data[key]['TD %s' %b]=np.where((df_data[key][BEH]==b), df_data[key]['durations'],np.NaN)
+        value = df_data[key].groupby(OBS)['TD %s' %b].sum()
+        results['%s TD %s' %(key,b)]=value
+
+    # Get the number and time spent on other behaviors before 1st behavior
+    for b in list_behaviors:
+        df_data[key]['TD_precop %s' %b]=np.where(((df_data[key][BEH]==b)&(df_data[key]['precop_mark']==1)), df_data[key]['durations'],np.NaN)
+        value = df_data[key].groupby(OBS)['TD_precop %s' %b].sum()
+        results['%s TD_precop %s' %(key,b)]=value
+
+        df_data[key]['TN_precop %s' %b]=np.where(((df_data[key][BEH]==b)&(df_data[key]['precop_mark']==1)&(df_data[key]['beh_num']==1)), df_data[key]['beh_num_back'],0)
+        value = df_data[key].groupby(OBS)['TN_precop %s' %b].max()
+        results['%s TN_precop %s' %(key,b)]=value
+    
+    # Withdraw the precop behaviors from the others
+        results['%s TD_minprecop %s' %(key,b)]=results['%s TD %s' %(key,b)]-results['%s TD_precop %s' %(key,b)]
+        results['%s TN_minprecop %s' %(key,b)]=results['%s TN %s' %(key,b)]-results['%s TN_precop %s' %(key,b)]
+    
+    # Get time spent on other behavior during PEI's from 1st behavior
+        df_data[key]['TD_PEIB %s' %b]=np.where(((df_data[key][BEH]==b)&(df_data[key]['PEIB_mark']==1)), df_data[key]['durations'],np.NaN)
+        value = df_data[key].groupby(OBS)['TD_PEIB %s' %b].sum()
+        results['%s TD_PEIB %s' %(key,b)]=value
+
+        df_data[key]['TN_PEIB %s' %b]=np.where(((df_data[key][BEH]==b)&(df_data[key]['PEIB_mark']==1)&(df_data[key]['beh_num']==1)), df_data[key]['beh_num_back'],0)
+        value = df_data[key].groupby(OBS)['TN_PEIB %s' %b].max()
+        results['%s TN_PEIB %s' %(key,b)]=value
+
+    # Get time spent on behavior during PEI's from 1st intromission
+        df_data[key]['TD_PEII %s' %b] = np.where(((df_data[key][BEH]==b)&(df_data[key]['PEII_mark']==1)),df_data[key]['durations'], np.NaN)
+        value = df_data[key].groupby(OBS)['TD_PEII %s' %b].sum()
+        results['%s TD_PEII %s' %(key,b)]=value
+
+        df_data[key]['TN_PEII %s' %b]=np.where(((df_data[key][BEH]==b)&(df_data[key]['PEII_mark']==1)&(df_data[key]['beh_num']==1)), df_data[key]['beh_num_back'],0)
+        value = df_data[key].groupby(OBS)['TN_PEII %s' %b].max()
+        results['%s TN_PEII %s' %(key,b)]=value
+    
+    # Calculate and make column with total number of extra behaviors
+    results['%s TN %s' %(key,EA)]=(results['%s TN %s' %(key,BA)]+results['%s TN %s' %(key,BB)]+results['%s TN %s' %(key,BC)])
+    results['%s TN %s' %(key,EE)]=(results['%s TN %s' %(key,EA)]+results['%s TN %s' %(key,BD)]+results['%s TN %s' %(key,BE)]+results['%s TN %s' %(key,BF)]+results['%s TN %s' %(key,BG)])
+    results['%s TN %s' %(key,EF)]=(results['%s TN %s' %(key,EE)]+results['%s TN %s' %(key,BH)])
+    results['%s TN %s' %(key,EG)]=(results['%s TN %s' %(key,BI)]+results['%s TN %s' %(key,BJ)])
+
+    results['%s TD %s' %(key,EE)]=(results['%s TD %s' %(key,BA)]+results['%s TD %s' %(key,BB)]+results['%s TD %s' %(key,BC)]+results['%s TD %s' %(key,BD)]+results['%s TD %s' %(key,BE)]+results['%s TD %s' %(key,BF)]+results['%s TD %s' %(key,BG)])
+    results['%s TD %s' %(key,EF)]=(results['%s TD %s' %(key,EE)]+results['%s TD %s' %(key,BH)])
+    results['%s TD %s' %(key,EG)]=(results['%s TD %s' %(key,BI)]+results['%s TD %s' %(key,BJ)])
+
+    results['%s TN_minprecop %s' %(key,EA)]=(results['%s TN_minprecop %s' %(key,BA)]+results['%s TN_minprecop %s' %(key,BB)]+results['%s TN_minprecop %s' %(key,BC)])
+    results['%s TN_minprecop %s' %(key,EE)]=(results['%s TN_minprecop %s' %(key,EA)]+results['%s TN_minprecop %s' %(key,BD)]+results['%s TN_minprecop %s' %(key,BE)]+results['%s TN_minprecop %s' %(key,BF)]+results['%s TN_minprecop %s' %(key,BG)])
+    results['%s TN_minprecop %s' %(key,EF)]=(results['%s TN_minprecop %s' %(key,EE)]+results['%s TN_minprecop %s' %(key,BH)])
+    results['%s TN_minprecop %s' %(key,EG)]=(results['%s TN_minprecop %s' %(key,BI)]+results['%s TN_minprecop %s' %(key,BJ)])
+
+    results['%s TD_minprecop %s' %(key,EE)]=(results['%s TD_minprecop %s' %(key,BA)]+results['%s TD_minprecop %s' %(key,BB)]+results['%s TD_minprecop %s' %(key,BC)]+results['%s TD_minprecop %s' %(key,BD)]+results['%s TD_minprecop %s' %(key,BE)]+results['%s TD_minprecop %s' %(key,BF)]+results['%s TD_minprecop %s' %(key,BG)])
+    results['%s TD_minprecop %s' %(key,EF)]=(results['%s TD_minprecop %s' %(key,EE)]+results['%s TD_minprecop %s' %(key,BH)])
+    results['%s TD_minprecop %s' %(key,EG)]=(results['%s TD_minprecop %s' %(key,BI)]+results['%s TD_minprecop %s' %(key,BJ)])
+  
+    results['%s TN_PEIB %s' %(key,EE)]=(results['%s TN %s' %(key,BD)]+results['%s TN %s' %(key,BE)]+results['%s TN %s' %(key,BF)]+results['%s TN %s' %(key,BG)])
+    results['%s TN_PEIB %s' %(key,EF)]=(results['%s TN %s' %(key,EE)]+results['%s TN %s' %(key,BH)])
+    results['%s TN_PEIB %s' %(key,EG)]=(results['%s TN %s' %(key,BI)]+results['%s TN %s' %(key,BJ)])
+
+    results['%s TD_PEIB %s' %(key,EE)]=(results['%s TD %s' %(key,BD)]+results['%s TD %s' %(key,BE)]+results['%s TD %s' %(key,BF)]+results['%s TD %s' %(key,BG)])
+    results['%s TD_PEIB %s' %(key,EF)]=(results['%s TD %s' %(key,EE)]+results['%s TD %s' %(key,BH)])
+    results['%s TD_PEIB %s' %(key,EG)]=(results['%s TD %s' %(key,BI)]+results['%s TD %s' %(key,BJ)])
+ 
+    results['%s TN_PEII %s' %(key,EE)]=(results['%s TN %s' %(key,BD)]+results['%s TN %s' %(key,BE)]+results['%s TN %s' %(key,BF)]+results['%s TN %s' %(key,BG)])
+    results['%s TN_PEII %s' %(key,EF)]=(results['%s TN %s' %(key,EE)]+results['%s TN %s' %(key,BH)])
+    results['%s TN_PEII %s' %(key,EG)]=(results['%s TN %s' %(key,BI)]+results['%s TN %s' %(key,BJ)])
+
+    results['%s TD_PEII %s' %(key,EE)]=(results['%s TD %s' %(key,BD)]+results['%s TD %s' %(key,BE)]+results['%s TD %s' %(key,BF)]+results['%s TD %s' %(key,BG)])
+    results['%s TD_PEII %s' %(key,EF)]=(results['%s TD %s' %(key,EE)]+results['%s TD %s' %(key,BH)])
+    results['%s TD_PEII %s' %(key,EG)]=(results['%s TD %s' %(key,BI)]+results['%s TD %s' %(key,BJ)])
+ 
+    # Calculate and make column with total intromissions ratio (intromissions/intromissions+mounts)
+    results['%s T IR'%key]=((results['%s TN %s' %(key,BB)])/((results['%s TN %s' %(key,BA)])+(results['%s TN %s' %(key,BB)])))
+        
+    # Calculate and make column with total copulatory rate (number of mounts and intromissions/ time from first behavior to end)
+    results['%s T CR'%key]=(results['%s TN %s' %(key,BA)]+results['%s TN %s' %(key,BB)]+1)/(results['%s L1 EB'%key])
+    
+    # Count single copulation total test
+    for b in list_sex:
+        df_data[key]['TN MB single %s' %b]= np.where(((df_data[key]['Mount_bout_mark']=='Single copulation')&(df_data[key][BEH]==b)),1,np.NaN)
+        results['%s TN MB single %s' %(key,b)]=df_data[key].groupby(OBS)['TN MB single %s' %b].sum()
+    
+    results['%s TN MB single copulations'%key]=results['%s TN MB single %s' %(key,BA)]+results['%s TN MB single %s' %(key,BB)]+results['%s TN MB single %s' %(key,BC)]
+    
+    # Count number mount bouts in total test
+    results['%s TN MB'%key] = df_data[key].groupby(OBS)['Mount_bout_count'].sum()
+    results['%s TN MB_exclsingle'%key]= df_data[key].groupby(OBS)['Mount_bout_count_exclsingle'].sum()
+    
+    # Total and mean duration mount bouts in total test 
+    results['%s TD MB'%key]=df_data[key].groupby(OBS)['Duration_mount_bout'].sum()
+    results['%s MD MB'%key]=df_data[key].groupby(OBS)['Duration_mount_bout'].mean()
+    
+    # Total and mean duration mount bouts in total test without single copulations
+    results['%s TD MB_exclsingle'%key]=df_data[key].groupby(OBS)['Duration_mount_bout_exclsingle'].sum()
+    results['%s TD MB_exclsingle'%key]=np.where(results['%s TN MB_exclsingle'%key]<2,np.NaN,results['%s TN MB_exclsingle'%key])
+
+    results['%s MD MB_exclsingle'%key]=df_data[key].groupby(OBS)['Duration_mount_bout_exclsingle'].mean()
+
+    # Total and mean duration time outs in total test
+    results['%s TD TO'%key]=df_data[key].groupby(OBS)['Duration_time_out'].sum()
+
+    results['%s MD TO'%key]=df_data[key].groupby(OBS)['Duration_time_out'].mean()
+    
+    # Calculate number of mounts/intromissions in a mount bout for total test (witouth single copulations)
+    results['%s TN MB Mount'%key]=results['%s TN Mount'%key]-results['%s TN MB single Mount'%key]
+    results['%s TN MB Intromission'%key]=results['%s TN Intromission'%key]-results['%s TN MB single Intromission'%key]
+    
+    # Calculate mean number of mounts/intromissions in a mountbout (with single copulations)
+    results['%s MN MB Mount'%key]=results['%s TN Mount'%key]/results['%s TN MB'%key]
+    results['%s MN MB Intromission'%key]=results['%s TN Intromission'%key]/results['%s TN MB'%key]
+    
+    # Calculate mean number of mounts/intromissions in a mountbout (without single copulations)
+    results['%s MN MB Mount_exclsingle'%key]=results['%s TN MB Mount'%key]/results['%s TN MB_exclsingle'%key]
+    results['%s MN MB Intromission_exclsingle'%key]=results['%s TN MB Intromission'%key]/results['%s TN MB_exclsingle'%key]
+    
+    # Calculate IMBI, mean of interval mount bouts
+    results['%s MD IMBI'%key]=df_data[key].groupby(OBS)['Interval_MB'].mean()
+
+# Make the final calculations
+results['S1LEB'] = (results['S1 L1 %s' %BC]- results['S1 L1 B'])
+results['S1LEI'] = (results['S1 L1 %s' %BC]- results['S1 L1 %s' %BB])
+results['S2LEB'] = (results['S2 L1 %s' %BC]- results['S2 L1 B'])
+results['S2LEI'] = (results['S2 L1 %s' %BC]- results['S2 L1 %s' %BB])
+results['S1PEIB'] = (results['S2 L1 B']-results['S1 L1 %s'% BC])
+results['S1PEII'] = (results['S2 L1 %s' %BB]-results['S1 L1 %s'% BC])
+results['S2PEIB'] = (results['S3 L1 B']-results['S2 L1 %s'% BC])
+results['S2PEII'] = (results['S3 L1 %s' %BB]-results['S2 L1 %s'% BC])
+
+# Calculate and make column with total intromissions interval (total time test / intromissions)
+results['all T III']=Timetest/results['all TN %s' %(BB)]
+results['S1 T IIIB']=results['S1LEB']/results['S1 TN %s' %(BB)]
+results['S2 T IIIB']=results['S2LEB']/results['S2 TN %s' %(BB)]
+results['S1 T IIII']=results['S1LEI']/results['S1 TN %s' %(BB)]
+results['S2 T IIII']=results['S2LEI']/results['S2 TN %s' %(BB)]
+
+# Calculate percentage of time spent on behaviors before ejaculation
+for b in list_behaviors:
+    results['S1 Perc %s' %b]=results['S1 TD %s' %b]/(results['S1 L1 %s' %BC]+results['S1 TD %s' %BC]-results['starttest'])*100
+    results['S2 Perc %s' %b]=results['S2 TD %s' %b]/(results['S2 L1 %s' %BC]+results['S2 TD %s' %BC]-results['starttest'])*100
+
+    # Calculate percentage of time spent on behaviors before ejaculation from 1st behavior
+    results['S1 Perc_minprecop %s' %b]=results['S1 TD_minprecop %s' %b]/(results['S1LEB']+results['S1 TD %s' %BC]-results['starttest'])*100
+    results['S2 Perc_minprecop %s' %b]=results['S2 TD_minprecop %s' %b]/(results['S2LEB']+results['S1 TD %s' %BC]-results['starttest'])*100
+    
+    ### CONTAINS MISTAKE, BUT DUE TO NOT USE, IT IS KEPT IN ####
+    # Calculare percentage of time spent on behaviors during PEI   
+    results['S2_PEI Perc_PEIB %s' %b]=results['S2_PEI TD_PEIB %s' %b]/results['S1PEIB']*100
+    results['S3_PEI Perc_PEIB %s' %b]=results['S3_PEI TD_PEIB %s' %b]/results['S2PEIB']*100
+
+    results['S2_PEI Perc_PEII %s' %b]=results['S2_PEI TD_PEII %s' %b]/results['S1PEII']*100
+    results['S3_PEI Perc_PEII %s' %b]=results['S3_PEI TD_PEII %s' %b]/results['S2PEII']*100
+    ###################################################################
+   
+    # Calculate percentage of time spent on behaviors 2nd series without PEI
+    results['S2 Perc_minprecopPEIB %s' %b]=(results['S2_PEI TD_PEIB %s' %b]-results['S2_PEI TD_minprecop %s' %b])/results['S2LEB']*100
+    results['S2 Perc_minprecopPEII %s' %b]=(results['S2_PEI TD_PEII %s' %b]-results['S2_PEI TD_minprecop %s' %b])/results['S2LEI']*100
+
+results['S1 Perc %s' %EE]=results['S1 TD %s' %EE]/(results['S1 L1 %s' %BC]+results['S1 TD %s' %BC]-results['starttest'])*100
+results['S1 Perc %s' %EF]=results['S1 TD %s' %EF]/(results['S1 L1 %s' %BC]+results['S1 TD %s' %BC]-results['starttest'])*100
+results['S1 Perc %s' %EG]=results['S1 TD %s' %EG]/(results['S1 L1 %s' %BC]+results['S1 TD %s' %BC]-results['starttest'])*100
+
+results['S2 Perc %s' %EE]=results['S2 TD %s' %EE]/(results['S2 L1 %s' %BC]-results['S1 L1 %s' %BC]+results['S2 TD %s' %BC]-results['S1 TD %s' %BC])*100
+results['S2 Perc %s' %EF]=results['S2 TD %s' %EF]/(results['S2 L1 %s' %BC]-results['S1 L1 %s' %BC]+results['S2 TD %s' %BC]-results['S1 TD %s' %BC])*100
+results['S2 Perc %s' %EG]=results['S2 TD %s' %EG]/(results['S2 L1 %s' %BC]-results['S1 L1 %s' %BC]+results['S2 TD %s' %BC]-results['S1 TD %s' %BC])*100
+
+# Add control column for percentage behavior
+results['S1 Perc control']=results['S1 Perc %s' %EF]+results['S1 Perc %s' %EG]
+results['S2 Perc control']=results['S2 Perc %s' %EF]+results['S2 Perc %s' %EG]
+
+
+results['S1 Perc_minprecop %s' %EE]=results['S1 TD_minprecop %s' %EE]/(results['S1LEB']+results['S1 TD %s' %BC])*100
+results['S1 Perc_minprecop %s' %EF]=results['S1 TD_minprecop %s' %EF]/(results['S1LEB']+results['S1 TD %s' %BC])*100
+results['S1 Perc_minprecop %s' %EG]=results['S1 TD_minprecop %s' %EG]/(results['S1LEB']+results['S1 TD %s' %BC])*100
+
+results['S2 Perc_minprecop %s' %EE]=results['S2 TD_minprecop %s' %EE]/(results['S2LEB']+results['S2 TD %s' %BC])*100
+results['S2 Perc_minprecop %s' %EF]=results['S2 TD_minprecop %s' %EF]/(results['S2LEB']+results['S2 TD %s' %BC])*100
+results['S2 Perc_minprecop %s' %EG]=results['S2 TD_minprecop %s' %EG]/(results['S2LEB']+results['S2 TD %s' %BC])*100
+
+# Add control column for percentage behavior
+results['S1 Perc_minprecop control']=results['S1 Perc_minprecop %s' %EF]+results['S1 Perc_minprecop %s' %EG]
+results['S2 Perc_minprecop control']=results['S2 Perc_minprecop %s' %EF]+results['S2 Perc_minprecop %s' %EG]
+
+
+#### CONTAINS MISTAKE, BUT DUE TO NOT USE, IT IS KEPT IN ####
+results['S2_PEI Perc_PEIB %s' %EE]=results['S2_PEI TD_PEIB %s' %EE]/(results['S2 L1 B']-results['S1 L1 %s' %BC])*100
+results['S2_PEI Perc_PEIB %s' %EF]=results['S2_PEI TD_PEIB %s' %EF]/(results['S2 L1 B']-results['S1 L1 %s' %BC])*100
+results['S2_PEI Perc_PEIB %s' %EG]=results['S2_PEI TD_PEIB %s' %EG]/(results['S2 L1 B']-results['S1 L1 %s' %BC])*100
+
+results['S3_PEI Perc_PEIB %s' %EE]=results['S3_PEI TD_PEIB %s' %EE]/(results['S3 L1 B']-results['S2 L1 %s' %BC])*100
+results['S3_PEI Perc_PEIB %s' %EF]=results['S3_PEI TD_PEIB %s' %EF]/(results['S3 L1 B']-results['S2 L1 %s' %BC])*100
+results['S3_PEI Perc_PEIB %s' %EG]=results['S3_PEI TD_PEIB %s' %EG]/(results['S3 L1 B']-results['S2 L1 %s' %BC])*100
+
+results['S2_PEI Perc_PEII %s' %EE]=results['S2_PEI TD_PEII %s' %EE]/(results['S2 L1 %s' %BB]-results['S1 L1 %s' %BC])*100
+results['S2_PEI Perc_PEII %s' %EF]=results['S2_PEI TD_PEII %s' %EF]/(results['S2 L1 %s' %BB]-results['S1 L1 %s' %BC])*100
+results['S2_PEI Perc_PEII %s' %EG]=results['S2_PEI TD_PEII %s' %EG]/(results['S2 L1 %s' %BB]-results['S1 L1 %s' %BC])*100
+
+results['S3_PEI Perc_PEII %s' %EE]=results['S3_PEI TD_PEII %s' %EE]/(results['S3 L1 %s' %BB]-results['S2 L1 %s' %BC])*100
+results['S3_PEI Perc_PEII %s' %EF]=results['S3_PEI TD_PEII %s' %EF]/(results['S3 L1 %s' %BB]-results['S2 L1 %s' %BC])*100
+results['S3_PEI Perc_PEII %s' %EG]=results['S3_PEI TD_PEII %s' %EG]/(results['S3 L1 %s' %BB]-results['S2 L1 %s' %BC])*100
+####################################################################
+
+# Calculate percentage of time spent on behaviors 2nd series without PEI
+results['S2 Perc_minprecopPEIB %s' %EE]=(results['S2_PEI TD_PEIB %s' %EE]-results['S2_PEI TD_minprecop %s' %EE])/results['S2LEB']*100
+results['S2 Perc_minprecopPEIB %s' %EF]=(results['S2_PEI TD_PEIB %s' %EF]-results['S2_PEI TD_minprecop %s' %EF])/results['S2LEB']*100
+results['S2 Perc_minprecopPEIB %s' %EG]=(results['S2_PEI TD_PEIB %s' %EG]-results['S2_PEI TD_minprecop %s' %EG])/results['S2LEB']*100
+
+results['S2 Perc_minprecopPEII %s' %EE]=(results['S2_PEI TD_PEII %s' %EE]-results['S2_PEI TD_minprecop %s' %EE])/results['S2LEI']*100
+results['S2 Perc_minprecopPEII %s' %EF]=(results['S2_PEI TD_PEII %s' %EF]-results['S2_PEI TD_minprecop %s' %EF])/results['S2LEI']*100
+results['S2 Perc_minprecopPEII %s' %EG]=(results['S2_PEI TD_PEII %s' %EG]-results['S2_PEI TD_minprecop %s' %EG])/results['S2LEI']*100
+
+# Correct PEI_TN copulations
+for b in list_sex:
+    results['S2_PEI TN %s' %b]=np.where(results['all TN Ejaculation']<2,np.NaN,results['S2_PEI TN %s' %b])
+    results['S3_PEI TN %s' %b]=np.where(results['all TN Ejaculation']<3,np.NaN,results['S3_PEI TN %s' %b])
+
+    results['S2_PEI TD %s' %b]=np.where(results['all TN Ejaculation']<2,np.NaN,results['S2_PEI TD %s' %b])
+    results['S3_PEI TD %s' %b]=np.where(results['all TN Ejaculation']<3,np.NaN,results['S3_PEI TD %s' %b])
+
+# Fix copulation rate total test
+results['all T CR']=(results['all TN %s' %BA]+results['all TN %s' %BB]+results['all TN %s' %BC])/Timetest
+
+# # Save the dataframes to excel for check
+# writer5 = pd.ExcelWriter(out_path3, engine='xlsxwriter')
+# results.to_excel(writer5, sheet_name='data_test')
+# writer5.save()
+# writer5.close()
+
+# # Organize the columns to only those relevant
+results.columns=[RATID,TREAT,EXP,'starttest','S1_L1M','S1_L1I','S1_L1E','S1_L1B','S2_L1M','S2_L1I','S2_L1E','S2_L1B','S3_L1M','S3_L1I','S3_L1E','S3_L1B',
+                  'S1_PEI_L1M','S1_PEI_L1I','S1_PEI_L1E','S1_PEI_L1B','S2_PEI_L1M','S2_PEI_L1I','S2_PEI_L1E','S2_PEI_L1B','S3_PEI_L1M','S3_PEI_L1I','S3_PEI_L1E',
+                  'S3_PEI_L1B','all_L1M','all_L1I','all_L1E','all_L1B','S1_L1EB','S1_L1EI','S1_TN_M','S1_TN_I','S1_TN_E','S1_TN_clasping','S1_TN_genigrooming',
+                  'S1_TN_chasing','S1_TN_anosniff','S1_TN_head_to_fem','S1_TN_grooming','S1_TN_head_not_fem','S1_TD_M','S1_TD_I','S1_TD_E','S1_TD_clasping',
+                  'S1_TD_genigrooming','S1_TD_chasing','S1_TD_anosniff','S1_TD_head_to_fem','S1_TD_grooming','S1_TD_head_not_fem','S1_TD_precop_M','S1_TN_precop_M',
+                  'S1_TD_minprecop_M','S1_TN_minprecop_M','S1_TD_PEIB_M','S1_TN_PEIB_M','S1_TD_PEII_M','S1_TN_PEII_M','S1_TD_precop_I','S1_TN_precop_I','S1_TD_minprecop_I',
+                  'S1_TN_minprecop_I','S1_TD_PEIB_I','S1_TN_PEIB_I','S1_TD_PEII_I','S1_TN_PEII_I','S1_TD_precopE','S1_TN_precopE','S1_TD_minprecopE','S1_TN_minprecopE',
+                  'S1_TD_PEIBE','S1_TN_PEIBE','S1_TD_PEIIE','S1_TN_PEIIE','S1_TD_precop_clasping','S1_TN_precop_clasping','S1_TD_minprecop_clasping',
+                  'S1_TN_minprecop_clasping','S1_TD_PEIB_clasping','S1_TN_PEIB_clasping','S1_TD_PEII_clasping','S1_TN_PEII_clasping','S1_TD_precop_genigrooming',
+                  'S1_TN_precop_genigrooming','S1_TD_minprecop_genigrooming','S1_TN_minprecop_genigrooming','S1_TD_PEIB_genigrooming','S1_TN_PEIB_genigrooming',
+                  'S1_TD_PEII_genigrooming','S1_TN_PEII_genigrooming','S1_TD_precop_chasing','S1_TN_precop_chasing','S1_TD_minprecop_chasing','S1_TN_minprecop_chasing',
+                  'S1_TD_PEIB_chasing','S1_TN_PEIB_chasing','S1_TD_PEII_chasing','S1_TN_PEII_chasing','S1_TD_precop_anosniff','S1_TN_precop_anosniff',
+                  'S1_TD_minprecop_anosniff','S1_TN_minprecop_anosniff','S1_TD_PEIB_anosniff','S1_TN_PEIB_anosniff','S1_TD_PEII_anosniff','S1_TN_PEII_anosniff',
+                  'S1_TD_precop_head_to_fem','S1_TN_precop_head_to_fem','S1_TD_minprecop_head_to_fem','S1_TN_minprecop_head_to_fem','S1_TD_PEIB_head_to_fem',
+                  'S1_TN_PEIB_head_to_fem','S1_TD_PEII_head_to_fem','S1_TN_PEII_head_to_fem','S1_TD_precop_grooming','S1_TN_precop_grooming','S1_TD_minprecop_grooming',
+                  'S1_TN_minprecop_grooming','S1_TD_PEIB_grooming','S1_TN_PEIB_grooming','S1_TD_PEII_grooming','S1_TN_PEII_grooming','S1_TD_precop_head_not_fem',
+                  'S1_TN_precop_head_not_fem','S1_TD_minprecop_head_not_fem','S1_TN_minprecop_head_not_fem','S1_TD_PEIB_head_not_fem','S1_TN_PEIB_head_not_fem',
+                  'S1_TD_PEII_head_not_fem','S1_TN_PEII_head_not_fem','S1_TN_copulations','S1_TN_cop_oriented_behavior','S1_TN_fem_oriented_behavior',
+                  'S1_TN_noncop_oriented_behavior','S1_TD_cop_oriented_behavior','S1_TD_fem_oriented_behavior','S1_TD_noncop_oriented_behavior',
+                  'S1_TN_minprecop_copulations','S1_TN_minprecop_cop_oriented_behavior','S1_TN_minprecop_fem_oriented_behavior','S1_TN_minprecop_noncop_oriented_behavior',
+                  'S1_TD_minprecop_cop_oriented_behavior','S1_TD_minprecop_fem_oriented_behavior','S1_TD_minprecop_noncop_oriented_behavior',
+                  'S1_TN_PEIB_cop_oriented_behavior','S1_TN_PEIB_fem_oriented_behavior','S1_TN_PEIB_noncop_oriented_behavior','S1_TD_PEIB_cop_oriented_behavior',
+                  'S1_TD_PEIB_fem_oriented_behavior','S1_TD_PEIB_noncop_oriented_behavior','S1_TN_PEII_cop_oriented_behavior','S1_TN_PEII_fem_oriented_behavior',
+                  'S1_TN_PEII_noncop_oriented_behavior','S1_TD_PEII_cop_oriented_behavior','S1_TD_PEII_fem_oriented_behavior','S1_TD_PEII_noncop_oriented_behavior',
+                  'S1_IR','S1_CR','S1_TN_MB_singleM','S1_TN_MB_singleI','S1_TN_MB_singleE','S1_TN_MB_single_copulations','S1_TN_MB','S1_TN_MB_exclsingle',
+                  'S1_TD_MB','S1_MD_MB','S1_TD_MB_exclsingle','S1_MD_MB_exclsingle','S1_TD_TO','S1_MD_TO','S1_TN_MB_M','S1_TN_MB_I','S1_MN_MB_M','S1_MN_MB_I',
+                  'S1_MN_MB_M_exclsingle','S1_MN_MB_I_exclsingle','S1_MD_IMBI','S2_L1EB','S2_L1EI','S2_TN_M','S2_TN_I','S2_TN_E','S2_TN_clasping','S2_TN_genigrooming',
+                  'S2_TN_chasing','S2_TN_anosniff','S2_TN_head_to_fem','S2_TN_grooming','S2_TN_head_not_fem','S2_TD_M','S2_TD_I','S2_TD_E','S2_TD_clasping',
+                  'S2_TD_genigrooming','S2_TD_chasing','S2_TD_anosniff','S2_TD_head_to_fem','S2_TD_grooming','S2_TD_head_not_fem','S2_TD_precop_M','S2_TN_precop_M',
+                  'S2_TD_minprecop_M','S2_TN_minprecop_M','S2_TD_PEIB_M','S2_TN_PEIB_M','S2_TD_PEII_M','S2_TN_PEII_M','S2_TD_precop_I','S2_TN_precop_I','S2_TD_minprecop_I',
+                  'S2_TN_minprecop_I','S2_TD_PEIB_I','S2_TN_PEIB_I','S2_TD_PEII_I','S2_TN_PEII_I','S2_TD_precopE','S2_TN_precopE','S2_TD_minprecopE','S2_TN_minprecopE',
+                  'S2_TD_PEIBE','S2_TN_PEIBE','S2_TD_PEIIE','S2_TN_PEIIE','S2_TD_precop_clasping','S2_TN_precop_clasping','S2_TD_minprecop_clasping',
+                  'S2_TN_minprecop_clasping','S2_TD_PEIB_clasping','S2_TN_PEIB_clasping','S2_TD_PEII_clasping','S2_TN_PEII_clasping','S2_TD_precop_genigrooming',
+                  'S2_TN_precop_genigrooming','S2_TD_minprecop_genigrooming','S2_TN_minprecop_genigrooming','S2_TD_PEIB_genigrooming','S2_TN_PEIB_genigrooming',
+                  'S2_TD_PEII_genigrooming','S2_TN_PEII_genigrooming','S2_TD_precop_chasing','S2_TN_precop_chasing','S2_TD_minprecop_chasing','S2_TN_minprecop_chasing',
+                  'S2_TD_PEIB_chasing','S2_TN_PEIB_chasing','S2_TD_PEII_chasing','S2_TN_PEII_chasing','S2_TD_precop_anosniff','S2_TN_precop_anosniff',
+                  'S2_TD_minprecop_anosniff','S2_TN_minprecop_anosniff','S2_TD_PEIB_anosniff','S2_TN_PEIB_anosniff','S2_TD_PEII_anosniff','S2_TN_PEII_anosniff',
+                  'S2_TD_precop_head_to_fem','S2_TN_precop_head_to_fem','S2_TD_minprecop_head_to_fem','S2_TN_minprecop_head_to_fem','S2_TD_PEIB_head_to_fem',
+                  'S2_TN_PEIB_head_to_fem','S2_TD_PEII_head_to_fem','S2_TN_PEII_head_to_fem','S2_TD_precop_grooming','S2_TN_precop_grooming','S2_TD_minprecop_grooming',
+                  'S2_TN_minprecop_grooming','S2_TD_PEIB_grooming','S2_TN_PEIB_grooming','S2_TD_PEII_grooming','S2_TN_PEII_grooming','S2_TD_precop_head_not_fem',
+                  'S2_TN_precop_head_not_fem','S2_TD_minprecop_head_not_fem','S2_TN_minprecop_head_not_fem','S2_TD_PEIB_head_not_fem','S2_TN_PEIB_head_not_fem',
+                  'S2_TD_PEII_head_not_fem','S2_TN_PEII_head_not_fem','S2_TN_copulations','S2_TN_cop_oriented_behavior','S2_TN_fem_oriented_behavior',
+                  'S2_TN_noncop_oriented_behavior','S2_TD_cop_oriented_behavior','S2_TD_fem_oriented_behavior','S2_TD_noncop_oriented_behavior',
+                  'S2_TN_minprecop_copulations','S2_TN_minprecop_cop_oriented_behavior','S2_TN_minprecop_fem_oriented_behavior','S2_TN_minprecop_noncop_oriented_behavior',
+                  'S2_TD_minprecop_cop_oriented_behavior','S2_TD_minprecop_fem_oriented_behavior','S2_TD_minprecop_noncop_oriented_behavior',
+                  'S2_TN_PEIB_cop_oriented_behavior','S2_TN_PEIB_fem_oriented_behavior','S2_TN_PEIB_noncop_oriented_behavior','S2_TD_PEIB_cop_oriented_behavior',
+                  'S2_TD_PEIB_fem_oriented_behavior','S2_TD_PEIB_noncop_oriented_behavior','S2_TN_PEII_cop_oriented_behavior','S2_TN_PEII_fem_oriented_behavior',
+                  'S2_TN_PEII_noncop_oriented_behavior','S2_TD_PEII_cop_oriented_behavior','S2_TD_PEII_fem_oriented_behavior','S2_TD_PEII_noncop_oriented_behavior',
+                  'S2_IR','S2_CR','S2_TN_MB_singleM','S2_TN_MB_singleI','S2_TN_MB_singleE','S2_TN_MB_single_copulations','S2_TN_MB','S2_TN_MB_exclsingle',
+                  'S2_TD_MB','S2_MD_MB','S2_TD_MB_exclsingle','S2_MD_MB_exclsingle','S2_TD_TO','S2_MD_TO','S2_TN_MB_M','S2_TN_MB_I','S2_MN_MB_M','S2_MN_MB_I',
+                  'S2_MN_MB_M_exclsingle','S2_MN_MB_I_exclsingle','S2_MD_IMBI','S3_L1EB','S3_L1EI','S3_TN_M','S3_TN_I','S3_TN_E','S3_TN_clasping','S3_TN_genigrooming',
+                  'S3_TN_chasing','S3_TN_anosniff','S3_TN_head_to_fem','S3_TN_grooming','S3_TN_head_not_fem','S3_TD_M','S3_TD_I','S3_TD_E','S3_TD_clasping',
+                  'S3_TD_genigrooming','S3_TD_chasing','S3_TD_anosniff','S3_TD_head_to_fem','S3_TD_grooming','S3_TD_head_not_fem','S3_TD_precop_M','S3_TN_precop_M',
+                  'S3_TD_minprecop_M','S3_TN_minprecop_M','S3_TD_PEIB_M','S3_TN_PEIB_M','S3_TD_PEII_M','S3_TN_PEII_M','S3_TD_precop_I','S3_TN_precop_I','S3_TD_minprecop_I',
+                  'S3_TN_minprecop_I','S3_TD_PEIB_I','S3_TN_PEIB_I','S3_TD_PEII_I','S3_TN_PEII_I','S3_TD_precopE','S3_TN_precopE','S3_TD_minprecopE','S3_TN_minprecopE',
+                  'S3_TD_PEIBE','S3_TN_PEIBE','S3_TD_PEIIE','S3_TN_PEIIE','S3_TD_precop_clasping','S3_TN_precop_clasping','S3_TD_minprecop_clasping',
+                  'S3_TN_minprecop_clasping','S3_TD_PEIB_clasping','S3_TN_PEIB_clasping','S3_TD_PEII_clasping','S3_TN_PEII_clasping','S3_TD_precop_genigrooming',
+                  'S3_TN_precop_genigrooming','S3_TD_minprecop_genigrooming','S3_TN_minprecop_genigrooming','S3_TD_PEIB_genigrooming','S3_TN_PEIB_genigrooming',
+                  'S3_TD_PEII_genigrooming','S3_TN_PEII_genigrooming','S3_TD_precop_chasing','S3_TN_precop_chasing','S3_TD_minprecop_chasing','S3_TN_minprecop_chasing',
+                  'S3_TD_PEIB_chasing','S3_TN_PEIB_chasing','S3_TD_PEII_chasing','S3_TN_PEII_chasing','S3_TD_precop_anosniff','S3_TN_precop_anosniff',
+                  'S3_TD_minprecop_anosniff','S3_TN_minprecop_anosniff','S3_TD_PEIB_anosniff','S3_TN_PEIB_anosniff','S3_TD_PEII_anosniff','S3_TN_PEII_anosniff',
+                  'S3_TD_precop_head_to_fem','S3_TN_precop_head_to_fem','S3_TD_minprecop_head_to_fem','S3_TN_minprecop_head_to_fem','S3_TD_PEIB_head_to_fem',
+                  'S3_TN_PEIB_head_to_fem','S3_TD_PEII_head_to_fem','S3_TN_PEII_head_to_fem','S3_TD_precop_grooming','S3_TN_precop_grooming','S3_TD_minprecop_grooming',
+                  'S3_TN_minprecop_grooming','S3_TD_PEIB_grooming','S3_TN_PEIB_grooming','S3_TD_PEII_grooming','S3_TN_PEII_grooming','S3_TD_precop_head_not_fem',
+                  'S3_TN_precop_head_not_fem','S3_TD_minprecop_head_not_fem','S3_TN_minprecop_head_not_fem','S3_TD_PEIB_head_not_fem','S3_TN_PEIB_head_not_fem',
+                  'S3_TD_PEII_head_not_fem','S3_TN_PEII_head_not_fem','S3_TN_copulations','S3_TN_cop_oriented_behavior','S3_TN_fem_oriented_behavior',
+                  'S3_TN_noncop_oriented_behavior','S3_TD_cop_oriented_behavior','S3_TD_fem_oriented_behavior','S3_TD_noncop_oriented_behavior',
+                  'S3_TN_minprecop_copulations','S3_TN_minprecop_cop_oriented_behavior','S3_TN_minprecop_fem_oriented_behavior','S3_TN_minprecop_noncop_oriented_behavior',
+                  'S3_TD_minprecop_cop_oriented_behavior','S3_TD_minprecop_fem_oriented_behavior','S3_TD_minprecop_noncop_oriented_behavior',
+                  'S3_TN_PEIB_cop_oriented_behavior','S3_TN_PEIB_fem_oriented_behavior','S3_TN_PEIB_noncop_oriented_behavior','S3_TD_PEIB_cop_oriented_behavior',
+                  'S3_TD_PEIB_fem_oriented_behavior','S3_TD_PEIB_noncop_oriented_behavior','S3_TN_PEII_cop_oriented_behavior','S3_TN_PEII_fem_oriented_behavior',
+                  'S3_TN_PEII_noncop_oriented_behavior','S3_TD_PEII_cop_oriented_behavior','S3_TD_PEII_fem_oriented_behavior','S3_TD_PEII_noncop_oriented_behavior',
+                  'S3_IR','S3_CR','S3_TN_MB_singleM','S3_TN_MB_singleI','S3_TN_MB_singleE','S3_TN_MB_single_copulations','S3_TN_MB','S3_TN_MB_exclsingle',
+                  'S3_TD_MB','S3_MD_MB','S3_TD_MB_exclsingle','S3_MD_MB_exclsingle','S3_TD_TO','S3_MD_TO','S3_TN_MB_M','S3_TN_MB_I','S3_MN_MB_M','S3_MN_MB_I',
+                  'S3_MN_MB_M_exclsingle','S3_MN_MB_I_exclsingle','S3_MD_IMBI','S1_PEI_L1EB','S1_PEI_L1EI','S1_PEI_TN_M','S1_PEI_TN_I','S1_PEI_TN_E','S1_PEI_TN_clasping',
+                  'S1_PEI_TN_genigrooming','S1_PEI_TN_chasing','S1_PEI_TN_anosniff','S1_PEI_TN_head_to_fem','S1_PEI_TN_grooming','S1_PEI_TN_head_not_fem','S1_PEI_TD_M',
+                  'S1_PEI_TD_I','S1_PEI_TD_E','S1_PEI_TD_clasping','S1_PEI_TD_genigrooming','S1_PEI_TD_chasing','S1_PEI_TD_anosniff','S1_PEI_TD_head_to_fem',
+                  'S1_PEI_TD_grooming','S1_PEI_TD_head_not_fem','S1_PEI_TD_precop_M','S1_PEI_TN_precop_M','S1_PEI_TD_minprecop_M','S1_PEI_TN_minprecop_M','S1_PEI_TD_PEIB_M',
+                  'S1_PEI_TN_PEIB_M','S1_PEI_TD_PEII_M','S1_PEI_TN_PEII_M','S1_PEI_TD_precop_I','S1_PEI_TN_precop_I','S1_PEI_TD_minprecop_I','S1_PEI_TN_minprecop_I',
+                  'S1_PEI_TD_PEIB_I','S1_PEI_TN_PEIB_I','S1_PEI_TD_PEII_I','S1_PEI_TN_PEII_I','S1_PEI_TD_precopE','S1_PEI_TN_precopE','S1_PEI_TD_minprecopE',
+                  'S1_PEI_TN_minprecopE','S1_PEI_TD_PEIBE','S1_PEI_TN_PEIBE','S1_PEI_TD_PEIIE','S1_PEI_TN_PEIIE','S1_PEI_TD_precop_clasping','S1_PEI_TN_precop_clasping',
+                  'S1_PEI_TD_minprecop_clasping','S1_PEI_TN_minprecop_clasping','S1_PEI_TD_PEIB_clasping','S1_PEI_TN_PEIB_clasping','S1_PEI_TD_PEII_clasping',
+                  'S1_PEI_TN_PEII_clasping','S1_PEI_TD_precop_genigrooming','S1_PEI_TN_precop_genigrooming','S1_PEI_TD_minprecop_genigrooming',
+                  'S1_PEI_TN_minprecop_genigrooming','S1_PEI_TD_PEIB_genigrooming','S1_PEI_TN_PEIB_genigrooming','S1_PEI_TD_PEII_genigrooming',
+                  'S1_PEI_TN_PEII_genigrooming','S1_PEI_TD_precop_chasing','S1_PEI_TN_precop_chasing','S1_PEI_TD_minprecop_chasing','S1_PEI_TN_minprecop_chasing',
+                  'S1_PEI_TD_PEIB_chasing','S1_PEI_TN_PEIB_chasing','S1_PEI_TD_PEII_chasing','S1_PEI_TN_PEII_chasing','S1_PEI_TD_precop_anosniff',
+                  'S1_PEI_TN_precop_anosniff','S1_PEI_TD_minprecop_anosniff','S1_PEI_TN_minprecop_anosniff','S1_PEI_TD_PEIB_anosniff','S1_PEI_TN_PEIB_anosniff',
+                  'S1_PEI_TD_PEII_anosniff','S1_PEI_TN_PEII_anosniff','S1_PEI_TD_precop_head_to_fem','S1_PEI_TN_precop_head_to_fem','S1_PEI_TD_minprecop_head_to_fem',
+                  'S1_PEI_TN_minprecop_head_to_fem','S1_PEI_TD_PEIB_head_to_fem','S1_PEI_TN_PEIB_head_to_fem','S1_PEI_TD_PEII_head_to_fem','S1_PEI_TN_PEII_head_to_fem',
+                  'S1_PEI_TD_precop_grooming','S1_PEI_TN_precop_grooming','S1_PEI_TD_minprecop_grooming','S1_PEI_TN_minprecop_grooming','S1_PEI_TD_PEIB_grooming',
+                  'S1_PEI_TN_PEIB_grooming','S1_PEI_TD_PEII_grooming','S1_PEI_TN_PEII_grooming','S1_PEI_TD_precop_head_not_fem','S1_PEI_TN_precop_head_not_fem',
+                  'S1_PEI_TD_minprecop_head_not_fem','S1_PEI_TN_minprecop_head_not_fem','S1_PEI_TD_PEIB_head_not_fem','S1_PEI_TN_PEIB_head_not_fem',
+                  'S1_PEI_TD_PEII_head_not_fem','S1_PEI_TN_PEII_head_not_fem','S1_PEI_TN_copulations','S1_PEI_TN_cop_oriented_behavior','S1_PEI_TN_fem_oriented_behavior',
+                  'S1_PEI_TN_noncop_oriented_behavior','S1_PEI_TD_cop_oriented_behavior','S1_PEI_TD_fem_oriented_behavior','S1_PEI_TD_noncop_oriented_behavior',
+                  'S1_PEI_TN_minprecop_copulations','S1_PEI_TN_minprecop_cop_oriented_behavior','S1_PEI_TN_minprecop_fem_oriented_behavior',
+                  'S1_PEI_TN_minprecop_noncop_oriented_behavior','S1_PEI_TD_minprecop_cop_oriented_behavior','S1_PEI_TD_minprecop_fem_oriented_behavior',
+                  'S1_PEI_TD_minprecop_noncop_oriented_behavior','S1_PEI_TN_PEIB_cop_oriented_behavior','S1_PEI_TN_PEIB_fem_oriented_behavior',
+                  'S1_PEI_TN_PEIB_noncop_oriented_behavior','S1_PEI_TD_PEIB_cop_oriented_behavior','S1_PEI_TD_PEIB_fem_oriented_behavior',
+                  'S1_PEI_TD_PEIB_noncop_oriented_behavior','S1_PEI_TN_PEII_cop_oriented_behavior','S1_PEI_TN_PEII_fem_oriented_behavior',
+                  'S1_PEI_TN_PEII_noncop_oriented_behavior','S1_PEI_TD_PEII_cop_oriented_behavior','S1_PEI_TD_PEII_fem_oriented_behavior',
+                  'S1_PEI_TD_PEII_noncop_oriented_behavior','S1_PEI_IR','S1_PEI_CR','S1_PEI_TN_MB_singleM','S1_PEI_TN_MB_singleI','S1_PEI_TN_MB_singleE',
+                  'S1_PEI_TN_MB_single_copulations','S1_PEI_TN_MB','S1_PEI_TN_MB_exclsingle','S1_PEI_TD_MB','S1_PEI_MD_MB','S1_PEI_TD_MB_exclsingle',
+                  'S1_PEI_MD_MB_exclsingle','S1_PEI_TD_TO','S1_PEI_MD_TO','S1_PEI_TN_MB_M','S1_PEI_TN_MB_I','S1_PEI_MN_MB_M','S1_PEI_MN_MB_I','S1_PEI_MN_MB_M_exclsingle',
+                  'S1_PEI_MN_MB_I_exclsingle','S1_PEI_MD_IMBI','S2_PEI_L1EB','S2_PEI_L1EI','S2_PEI_TN_M','S2_PEI_TN_I','S2_PEI_TN_E','S2_PEI_TN_clasping',
+                  'S2_PEI_TN_genigrooming','S2_PEI_TN_chasing','S2_PEI_TN_anosniff','S2_PEI_TN_head_to_fem','S2_PEI_TN_grooming','S2_PEI_TN_head_not_fem',
+                  'S2_PEI_TD_M','S2_PEI_TD_I','S2_PEI_TD_E','S2_PEI_TD_clasping','S2_PEI_TD_genigrooming','S2_PEI_TD_chasing','S2_PEI_TD_anosniff','S2_PEI_TD_head_to_fem',
+                  'S2_PEI_TD_grooming','S2_PEI_TD_head_not_fem','S2_PEI_TD_precop_M','S2_PEI_TN_precop_M','S2_PEI_TD_minprecop_M','S2_PEI_TN_minprecop_M',
+                  'S2_PEI_TD_PEIB_M','S2_PEI_TN_PEIB_M','S2_PEI_TD_PEII_M','S2_PEI_TN_PEII_M','S2_PEI_TD_precop_I','S2_PEI_TN_precop_I','S2_PEI_TD_minprecop_I',
+                  'S2_PEI_TN_minprecop_I','S2_PEI_TD_PEIB_I','S2_PEI_TN_PEIB_I','S2_PEI_TD_PEII_I','S2_PEI_TN_PEII_I','S2_PEI_TD_precopE','S2_PEI_TN_precopE',
+                  'S2_PEI_TD_minprecopE','S2_PEI_TN_minprecopE','S2_PEI_TD_PEIBE','S2_PEI_TN_PEIBE','S2_PEI_TD_PEIIE','S2_PEI_TN_PEIIE','S2_PEI_TD_precop_clasping',
+                  'S2_PEI_TN_precop_clasping','S2_PEI_TD_minprecop_clasping','S2_PEI_TN_minprecop_clasping','S2_PEI_TD_PEIB_clasping','S2_PEI_TN_PEIB_clasping',
+                  'S2_PEI_TD_PEII_clasping','S2_PEI_TN_PEII_clasping','S2_PEI_TD_precop_genigrooming','S2_PEI_TN_precop_genigrooming','S2_PEI_TD_minprecop_genigrooming',
+                  'S2_PEI_TN_minprecop_genigrooming','S2_PEI_TD_PEIB_genigrooming','S2_PEI_TN_PEIB_genigrooming','S2_PEI_TD_PEII_genigrooming',
+                  'S2_PEI_TN_PEII_genigrooming','S2_PEI_TD_precop_chasing','S2_PEI_TN_precop_chasing','S2_PEI_TD_minprecop_chasing','S2_PEI_TN_minprecop_chasing',
+                  'S2_PEI_TD_PEIB_chasing','S2_PEI_TN_PEIB_chasing','S2_PEI_TD_PEII_chasing','S2_PEI_TN_PEII_chasing','S2_PEI_TD_precop_anosniff',
+                  'S2_PEI_TN_precop_anosniff','S2_PEI_TD_minprecop_anosniff','S2_PEI_TN_minprecop_anosniff','S2_PEI_TD_PEIB_anosniff','S2_PEI_TN_PEIB_anosniff',
+                  'S2_PEI_TD_PEII_anosniff','S2_PEI_TN_PEII_anosniff','S2_PEI_TD_precop_head_to_fem','S2_PEI_TN_precop_head_to_fem','S2_PEI_TD_minprecop_head_to_fem',
+                  'S2_PEI_TN_minprecop_head_to_fem','S2_PEI_TD_PEIB_head_to_fem','S2_PEI_TN_PEIB_head_to_fem','S2_PEI_TD_PEII_head_to_fem','S2_PEI_TN_PEII_head_to_fem',
+                  'S2_PEI_TD_precop_grooming','S2_PEI_TN_precop_grooming','S2_PEI_TD_minprecop_grooming','S2_PEI_TN_minprecop_grooming','S2_PEI_TD_PEIB_grooming',
+                  'S2_PEI_TN_PEIB_grooming','S2_PEI_TD_PEII_grooming','S2_PEI_TN_PEII_grooming','S2_PEI_TD_precop_head_not_fem','S2_PEI_TN_precop_head_not_fem',
+                  'S2_PEI_TD_minprecop_head_not_fem','S2_PEI_TN_minprecop_head_not_fem','S2_PEI_TD_PEIB_head_not_fem','S2_PEI_TN_PEIB_head_not_fem',
+                  'S2_PEI_TD_PEII_head_not_fem','S2_PEI_TN_PEII_head_not_fem','S2_PEI_TN_copulations','S2_PEI_TN_cop_oriented_behavior','S2_PEI_TN_fem_oriented_behavior',
+                  'S2_PEI_TN_noncop_oriented_behavior','S2_PEI_TD_cop_oriented_behavior','S2_PEI_TD_fem_oriented_behavior','S2_PEI_TD_noncop_oriented_behavior',
+                  'S2_PEI_TN_minprecop_copulations','S2_PEI_TN_minprecop_cop_oriented_behavior','S2_PEI_TN_minprecop_fem_oriented_behavior',
+                  'S2_PEI_TN_minprecop_noncop_oriented_behavior','S2_PEI_TD_minprecop_cop_oriented_behavior','S2_PEI_TD_minprecop_fem_oriented_behavior',
+                  'S2_PEI_TD_minprecop_noncop_oriented_behavior','S2_PEI_TN_PEIB_cop_oriented_behavior','S2_PEI_TN_PEIB_fem_oriented_behavior',
+                  'S2_PEI_TN_PEIB_noncop_oriented_behavior','S2_PEI_TD_PEIB_cop_oriented_behavior','S2_PEI_TD_PEIB_fem_oriented_behavior',
+                  'S2_PEI_TD_PEIB_noncop_oriented_behavior','S2_PEI_TN_PEII_cop_oriented_behavior','S2_PEI_TN_PEII_fem_oriented_behavior',
+                  'S2_PEI_TN_PEII_noncop_oriented_behavior','S2_PEI_TD_PEII_cop_oriented_behavior','S2_PEI_TD_PEII_fem_oriented_behavior',
+                  'S2_PEI_TD_PEII_noncop_oriented_behavior','S2_PEI_IR','S2_PEI_CR','S2_PEI_TN_MB_singleM','S2_PEI_TN_MB_singleI','S2_PEI_TN_MB_singleE',
+                  'S2_PEI_TN_MB_single_copulations','S2_PEI_TN_MB','S2_PEI_TN_MB_exclsingle','S2_PEI_TD_MB','S2_PEI_MD_MB','S2_PEI_TD_MB_exclsingle',
+                  'S2_PEI_MD_MB_exclsingle','S2_PEI_TD_TO','S2_PEI_MD_TO','S2_PEI_TN_MB_M','S2_PEI_TN_MB_I','S2_PEI_MN_MB_M','S2_PEI_MN_MB_I','S2_PEI_MN_MB_M_exclsingle',
+                  'S2_PEI_MN_MB_I_exclsingle','S2_PEI_MD_IMBI','S3_PEI_L1EB','S3_PEI_L1EI','S3_PEI_TN_M','S3_PEI_TN_I','S3_PEI_TN_E','S3_PEI_TN_clasping',
+                  'S3_PEI_TN_genigrooming','S3_PEI_TN_chasing','S3_PEI_TN_anosniff','S3_PEI_TN_head_to_fem','S3_PEI_TN_grooming','S3_PEI_TN_head_not_fem',
+                  'S3_PEI_TD_M','S3_PEI_TD_I','S3_PEI_TD_E','S3_PEI_TD_clasping','S3_PEI_TD_genigrooming','S3_PEI_TD_chasing','S3_PEI_TD_anosniff','S3_PEI_TD_head_to_fem',
+                  'S3_PEI_TD_grooming','S3_PEI_TD_head_not_fem','S3_PEI_TD_precop_M','S3_PEI_TN_precop_M','S3_PEI_TD_minprecop_M','S3_PEI_TN_minprecop_M','S3_PEI_TD_PEIB_M',
+                  'S3_PEI_TN_PEIB_M','S3_PEI_TD_PEII_M','S3_PEI_TN_PEII_M','S3_PEI_TD_precop_I','S3_PEI_TN_precop_I','S3_PEI_TD_minprecop_I','S3_PEI_TN_minprecop_I',
+                  'S3_PEI_TD_PEIB_I','S3_PEI_TN_PEIB_I','S3_PEI_TD_PEII_I','S3_PEI_TN_PEII_I','S3_PEI_TD_precopE','S3_PEI_TN_precopE','S3_PEI_TD_minprecopE',
+                  'S3_PEI_TN_minprecopE','S3_PEI_TD_PEIBE','S3_PEI_TN_PEIBE','S3_PEI_TD_PEIIE','S3_PEI_TN_PEIIE','S3_PEI_TD_precop_clasping','S3_PEI_TN_precop_clasping',
+                  'S3_PEI_TD_minprecop_clasping','S3_PEI_TN_minprecop_clasping','S3_PEI_TD_PEIB_clasping','S3_PEI_TN_PEIB_clasping','S3_PEI_TD_PEII_clasping',
+                  'S3_PEI_TN_PEII_clasping','S3_PEI_TD_precop_genigrooming','S3_PEI_TN_precop_genigrooming','S3_PEI_TD_minprecop_genigrooming',
+                  'S3_PEI_TN_minprecop_genigrooming','S3_PEI_TD_PEIB_genigrooming','S3_PEI_TN_PEIB_genigrooming','S3_PEI_TD_PEII_genigrooming',
+                  'S3_PEI_TN_PEII_genigrooming','S3_PEI_TD_precop_chasing','S3_PEI_TN_precop_chasing','S3_PEI_TD_minprecop_chasing','S3_PEI_TN_minprecop_chasing',
+                  'S3_PEI_TD_PEIB_chasing','S3_PEI_TN_PEIB_chasing','S3_PEI_TD_PEII_chasing','S3_PEI_TN_PEII_chasing','S3_PEI_TD_precop_anosniff',
+                  'S3_PEI_TN_precop_anosniff','S3_PEI_TD_minprecop_anosniff','S3_PEI_TN_minprecop_anosniff','S3_PEI_TD_PEIB_anosniff','S3_PEI_TN_PEIB_anosniff',
+                  'S3_PEI_TD_PEII_anosniff','S3_PEI_TN_PEII_anosniff','S3_PEI_TD_precop_head_to_fem','S3_PEI_TN_precop_head_to_fem','S3_PEI_TD_minprecop_head_to_fem',
+                  'S3_PEI_TN_minprecop_head_to_fem','S3_PEI_TD_PEIB_head_to_fem','S3_PEI_TN_PEIB_head_to_fem','S3_PEI_TD_PEII_head_to_fem','S3_PEI_TN_PEII_head_to_fem',
+                  'S3_PEI_TD_precop_grooming','S3_PEI_TN_precop_grooming','S3_PEI_TD_minprecop_grooming','S3_PEI_TN_minprecop_grooming','S3_PEI_TD_PEIB_grooming',
+                  'S3_PEI_TN_PEIB_grooming','S3_PEI_TD_PEII_grooming','S3_PEI_TN_PEII_grooming','S3_PEI_TD_precop_head_not_fem','S3_PEI_TN_precop_head_not_fem',
+                  'S3_PEI_TD_minprecop_head_not_fem','S3_PEI_TN_minprecop_head_not_fem','S3_PEI_TD_PEIB_head_not_fem','S3_PEI_TN_PEIB_head_not_fem',
+                  'S3_PEI_TD_PEII_head_not_fem','S3_PEI_TN_PEII_head_not_fem','S3_PEI_TN_copulations','S3_PEI_TN_cop_oriented_behavior','S3_PEI_TN_fem_oriented_behavior',
+                  'S3_PEI_TN_noncop_oriented_behavior','S3_PEI_TD_cop_oriented_behavior','S3_PEI_TD_fem_oriented_behavior','S3_PEI_TD_noncop_oriented_behavior',
+                  'S3_PEI_TN_minprecop_copulations','S3_PEI_TN_minprecop_cop_oriented_behavior','S3_PEI_TN_minprecop_fem_oriented_behavior',
+                  'S3_PEI_TN_minprecop_noncop_oriented_behavior','S3_PEI_TD_minprecop_cop_oriented_behavior','S3_PEI_TD_minprecop_fem_oriented_behavior',
+                  'S3_PEI_TD_minprecop_noncop_oriented_behavior','S3_PEI_TN_PEIB_cop_oriented_behavior','S3_PEI_TN_PEIB_fem_oriented_behavior',
+                  'S3_PEI_TN_PEIB_noncop_oriented_behavior','S3_PEI_TD_PEIB_cop_oriented_behavior','S3_PEI_TD_PEIB_fem_oriented_behavior',
+                  'S3_PEI_TD_PEIB_noncop_oriented_behavior','S3_PEI_TN_PEII_cop_oriented_behavior','S3_PEI_TN_PEII_fem_oriented_behavior',
+                  'S3_PEI_TN_PEII_noncop_oriented_behavior','S3_PEI_TD_PEII_cop_oriented_behavior','S3_PEI_TD_PEII_fem_oriented_behavior',
+                  'S3_PEI_TD_PEII_noncop_oriented_behavior','S3_PEI_IR','S3_PEI_CR','S3_PEI_TN_MB_singleM','S3_PEI_TN_MB_singleI','S3_PEI_TN_MB_singleE',
+                  'S3_PEI_TN_MB_single_copulations','S3_PEI_TN_MB','S3_PEI_TN_MB_exclsingle','S3_PEI_TD_MB','S3_PEI_MD_MB','S3_PEI_TD_MB_exclsingle',
+                  'S3_PEI_MD_MB_exclsingle','S3_PEI_TD_TO','S3_PEI_MD_TO','S3_PEI_TN_MB_M','S3_PEI_TN_MB_I','S3_PEI_MN_MB_M','S3_PEI_MN_MB_I','S3_PEI_MN_MB_M_exclsingle',
+                  'S3_PEI_MN_MB_I_exclsingle','S3_PEI_MD_IMBI','all_L1EB','all_L1EI','all_TN_M','all_TN_I','all_TN_E','all_TN_clasping','all_TN_genigrooming',
+                  'all_TN_chasing','all_TN_anosniff','all_TN_head_to_fem','all_TN_grooming','all_TN_head_not_fem','all_TD_M','all_TD_I','all_TD_E','all_TD_clasping',
+                  'all_TD_genigrooming','all_TD_chasing','all_TD_anosniff','all_TD_head_to_fem','all_TD_grooming','all_TD_head_not_fem','all_TD_precop_M',
+                  'all_TN_precop_M','all_TD_minprecop_M','all_TN_minprecop_M','all_TD_PEIB_M','all_TN_PEIB_M','all_TD_PEII_M','all_TN_PEII_M','all_TD_precop_I','all_TN_precop_I',
+                  'all_TD_minprecop_I','all_TN_minprecop_I','all_TD_PEIB_I','all_TN_PEIB_I','all_TD_PEII_I','all_TN_PEII_I','all_TD_precopE','all_TN_precopE',
+                  'all_TD_minprecopE','all_TN_minprecopE','all_TD_PEIBE','all_TN_PEIBE','all_TD_PEIIE','all_TN_PEIIE','all_TD_precop_clasping','all_TN_precop_clasping',
+                  'all_TD_minprecop_clasping','all_TN_minprecop_clasping','all_TD_PEIB_clasping','all_TN_PEIB_clasping','all_TD_PEII_clasping','all_TN_PEII_clasping',
+                  'all_TD_precop_genigrooming','all_TN_precop_genigrooming','all_TD_minprecop_genigrooming','all_TN_minprecop_genigrooming','all_TD_PEIB_genigrooming',
+                  'all_TN_PEIB_genigrooming','all_TD_PEII_genigrooming','all_TN_PEII_genigrooming','all_TD_precop_chasing','all_TN_precop_chasing',
+                  'all_TD_minprecop_chasing','all_TN_minprecop_chasing','all_TD_PEIB_chasing','all_TN_PEIB_chasing','all_TD_PEII_chasing','all_TN_PEII_chasing',
+                  'all_TD_precop_anosniff','all_TN_precop_anosniff','all_TD_minprecop_anosniff','all_TN_minprecop_anosniff','all_TD_PEIB_anosniff','all_TN_PEIB_anosniff',
+                  'all_TD_PEII_anosniff','all_TN_PEII_anosniff','all_TD_precop_head_to_fem','all_TN_precop_head_to_fem','all_TD_minprecop_head_to_fem',
+                  'all_TN_minprecop_head_to_fem','all_TD_PEIB_head_to_fem','all_TN_PEIB_head_to_fem','all_TD_PEII_head_to_fem','all_TN_PEII_head_to_fem',
+                  'all_TD_precop_grooming','all_TN_precop_grooming','all_TD_minprecop_grooming','all_TN_minprecop_grooming','all_TD_PEIB_grooming',
+                  'all_TN_PEIB_grooming','all_TD_PEII_grooming','all_TN_PEII_grooming','all_TD_precop_head_not_fem','all_TN_precop_head_not_fem',
+                  'all_TD_minprecop_head_not_fem','all_TN_minprecop_head_not_fem','all_TD_PEIB_head_not_fem','all_TN_PEIB_head_not_fem','all_TD_PEII_head_not_fem',
+                  'all_TN_PEII_head_not_fem','all_TN_copulations','all_TN_cop_oriented_behavior','all_TN_fem_oriented_behavior','all_TN_noncop_oriented_behavior',
+                  'all_TD_cop_oriented_behavior','all_TD_fem_oriented_behavior','all_TD_noncop_oriented_behavior','all_TN_minprecop_copulations',
+                  'all_TN_minprecop_cop_oriented_behavior','all_TN_minprecop_fem_oriented_behavior','all_TN_minprecop_noncop_oriented_behavior',
+                  'all_TD_minprecop_cop_oriented_behavior','all_TD_minprecop_fem_oriented_behavior','all_TD_minprecop_noncop_oriented_behavior',
+                  'all_TN_PEIB_cop_oriented_behavior','all_TN_PEIB_fem_oriented_behavior','all_TN_PEIB_noncop_oriented_behavior','all_TD_PEIB_cop_oriented_behavior',
+                  'all_TD_PEIB_fem_oriented_behavior','all_TD_PEIB_noncop_oriented_behavior','all_TN_PEII_cop_oriented_behavior','all_TN_PEII_fem_oriented_behavior',
+                  'all_TN_PEII_noncop_oriented_behavior','all_TD_PEII_cop_oriented_behavior','all_TD_PEII_fem_oriented_behavior','all_TD_PEII_noncop_oriented_behavior',
+                  'all_IR','all_CR','all_TN_MB_singleM','all_TN_MB_singleI','all_TN_MB_singleE','all_TN_MB_single_copulations','all_TN_MB','all_TN_MB_exclsingle',
+                  'all_TD_MB','all_MD_MB','all_TD_MB_exclsingle','all_MD_MB_exclsingle','all_TD_TO','all_MD_TO','all_TN_MB_M','all_TN_MB_I','all_MN_MB_M','all_MN_MB_I',
+                  'all_MN_MB_M_exclsingle','all_MN_MB_I_exclsingle','all_MD_IMBI','S1LEB','S1LEI','S2LEB','S2LEI','S1PEIB','S1PEII','S2PEIB','S2PEII','all_III',
+                  'S1_IIIB','S2_IIIB','S1_IIII','S2_IIII','S1_Perc_M','S2_Perc_M','S1_Perc_minprecop_M','S2_Perc_minprecop_M','S2_PEI_Perc_PEIB_M','S3_PEI_Perc_PEIB_M',
+                    'S2_PEI_Perc_PEII_M','S3_PEI_Perc_PEII_M','S2_Perc_minprecopPEIB_M','S2_Perc_minprecopPEII_M','S1_Perc_I','S2_Perc_I','S1_Perc_minprecop_I',
+                    'S2_Perc_minprecop_I','S2_PEI_Perc_PEIB_I','S3_PEI_Perc_PEIB_I','S2_PEI_Perc_PEII_I','S3_PEI_Perc_PEII_I',
+                    'S2_Perc_minprecopPEIB_I','S2_Perc_minprecopPEII_I','S1_Perc_E','S2_Perc_E','S1_Perc_minprecop_E',
+                    'S2_Perc_minprecop_E','S2_PEI_Perc_PEIB_E','S3_PEI_Perc_PEIB_E','S2_PEI_Perc_PEII_E','S3_PEI_Perc_PEII_E',
+                    'S2_Perc_minprecopPEIB_E','S2_Perc_minprecopPEII_E','S1_Perc_clasping','S2_Perc_clasping','S1_Perc_minprecop_clasping','S2_Perc_minprecop_clasping',
+                    'S2_PEI_Perc_PEIB_clasping','S3_PEI_Perc_PEIB_clasping','S2_PEI_Perc_PEII_clasping','S3_PEI_Perc_PEII_clasping','S2_Perc_minprecopPEIB_clasping',
+                    'S2_Perc_minprecopPEII_clasping','S1_Perc_genigrooming','S2_Perc_genigrooming','S1_Perc_minprecop_genigrooming','S2_Perc_minprecop_genigrooming',
+                    'S2_PEI_Perc_PEIB_genigrooming','S3_PEI_Perc_PEIB_genigrooming','S2_PEI_Perc_PEII_genigrooming','S3_PEI_Perc_PEII_genigrooming',
+                    'S2_Perc_minprecopPEIB_genigrooming','S2_Perc_minprecopPEII_genigrooming','S1_Perc_chasing','S2_Perc_chasing','S1_Perc_minprecop_chasing',
+                    'S2_Perc_minprecop_chasing','S2_PEI_Perc_PEIB_chasing','S3_PEI_Perc_PEIB_chasing','S2_PEI_Perc_PEII_chasing','S3_PEI_Perc_PEII_chasing','S2_Perc_minprecopPEIB_chasing',
+                    'S2_Perc_minprecopPEII_chasing','S1_Perc_anosniff','S2_Perc_anosniff','S1_Perc_minprecop_anosniff','S2_Perc_minprecop_anosniff',
+                    'S2_PEI_Perc_PEIB_anosniff','S3_PEI_Perc_PEIB_anosniff','S2_PEI_Perc_PEII_anosniff','S3_PEI_Perc_PEII_anosniff',
+                    'S2_Perc_minprecopPEIB_anosniff','S2_Perc_minprecopPEII_anosniff','S1_Perc_head_to_fem','S2_Perc_head_to_fem',
+                    'S1_Perc_minprecop_head_to_fem','S2_Perc_minprecop_head_to_fem','S2_PEI_Perc_PEIB_head_to_fem','S3_PEI_Perc_PEIB_head_to_fem',
+                    'S2_PEI_Perc_PEII_head_to_fem','S3_PEI_Perc_PEII_head_to_fem','S2_Perc_minprecopPEIB_head_to_fem','S2_Perc_minprecopPEII_head_to_fem',
+                    'S1_Perc_grooming','S2_Perc_grooming','S1_Perc_minprecop_grooming','S2_Perc_minprecop_grooming','S2_PEI_Perc_PEIB_grooming',
+                    'S3_PEI_Perc_PEIB_grooming','S2_PEI_Perc_PEII_grooming','S3_PEI_Perc_PEII_grooming','S2_Perc_minprecopPEIB_grooming',
+                    'S2_Perc_minprecopPEII_grooming','S1_Perc_head_not_fem','S2_Perc_head_not_fem','S1_Perc_minprecop_head_not_fem',
+                    'S2_Perc_minprecop_head_not_fem','S2_PEI_Perc_PEIB_head_not_fem','S3_PEI_Perc_PEIB_head_not_fem',
+                    'S2_PEI_Perc_PEII_head_not_fem','S3_PEI_Perc_PEII_head_not_fem','S2_Perc_minprecopPEIB_head_not_fem',
+                    'S2_Perc_minprecopPEII_head_not_fem','S1_Perc_cop_oriented_behavior','S1_Perc_fem_oriented_behavior','S1_Perc_noncop_oriented_behavior',
+                    'S2_Perc_cop_oriented_behavior','S2_Perc_fem_oriented_behavior','S2_Perc_noncop_oriented_behavior','S1_Perc_control','S2_Perc_control',
+                    'S1_Perc_minprecop_cop_oriented_behavior',
+                    'S1_Perc_minprecop_fem_oriented_behavior','S1_Perc_minprecop_noncop_oriented_behavior','S2_Perc_minprecop_cop_oriented_behavior',
+                    'S2_Perc_minprecop_fem_oriented_behavior','S2_Perc_minprecop_noncop_oriented_behavior','S1_Perc_minprecop_control','S2_Perc_minprecop_control',
+                    'S2_PEI_Perc_PEIB_cop_oriented_behavior',
+                    'S2_PEI_Perc_PEIB_fem_oriented_behavior','S2_PEI_Perc_PEIB_noncop_oriented_behavior','S3_PEI_Perc_PEIB_cop_oriented_behavior',
+                    'S3_PEI_Perc_PEIB_fem_oriented_behavior','S3_PEI_Perc_PEIB_noncop_oriented_behavior','S2_PEI_Perc_PEII_cop_oriented_behavior',
+                    'S2_PEI_Perc_PEII_fem_oriented_behavior','S2_PEI_Perc_PEII_noncop_oriented_behavior','S3_PEI_Perc_PEII_cop_oriented_behavior',
+                    'S3_PEI_Perc_PEII_fem_oriented_behavior','S3_PEI_Perc_PEII_noncop_oriented_behavior','S2_Perc_minprecopPEIB_cop_oriented_behavior',
+                    'S2_Perc_minprecopPEIB_fem_oriented_behavior','S2_Perc_minprecopPEIB_noncop_oriented_behavior','S2_Perc_minprecopPEII_cop_oriented_behavior',
+                    'S2_Perc_minprecopPEII_fem_oriented_behavior','S2_Perc_minprecopPEII_noncop_oriented_behavior']
+
+
+# Empty cells if no ejaculation in second series
+list_S2_columns=['S2_TN_MB','S2_TD_MB','S2_MD_MB','S2_TD_TO','S2_MD_TO','S2_MD_IMBI','S2_TN_MB_singleM','S2_TN_MB_singleI',
+                  'S2_TN_MB_singleE','S2_TN_MB_single_copulations','S2_TN_MB_M','S2_TN_MB_I','S2_MN_MB_M','S2_MN_MB_I',
+                  'S2_TN_cop_oriented_behavior','S2_TN_fem_oriented_behavior','S2_TN_noncop_oriented_behavior',
+                  'S2_TD_cop_oriented_behavior','S2_TD_fem_oriented_behavior','S2_TD_noncop_oriented_behavior','S2_TN_clasping','S2_TN_genigrooming',
+                  'S2_TN_chasing','S2_TN_anosniff','S2_TN_head_to_fem','S2_TN_grooming','S2_TN_head_not_fem','S2_TD_M','S2_TD_I','S2_TD_E','S2_TD_clasping','S2_TD_genigrooming','S2_TD_chasing','S2_TD_anosniff','S2_TD_head_to_fem','S2_TD_grooming',
+                  'S2_TD_head_not_fem','S2_Perc_M','S2_Perc_I','S2_Perc_E','S2_Perc_cop_oriented_behavior','S2_Perc_fem_oriented_behavior','S2_Perc_noncop_oriented_behavior','S2_Perc_control',
+                  'S2_Perc_clasping','S2_Perc_genigrooming','S2_Perc_chasing','S2_Perc_anosniff','S2_Perc_head_to_fem','S2_Perc_grooming','S2_Perc_head_not_fem',
+                  'S2_Perc_minprecop_cop_oriented_behavior','S2_Perc_minprecop_fem_oriented_behavior','S2_Perc_minprecop_noncop_oriented_behavior','S2_Perc_minprecop_control',
+                  'S2_PEI_Perc_PEIB_cop_oriented_behavior','S2_PEI_Perc_PEIB_fem_oriented_behavior','S2_PEI_Perc_PEIB_noncop_oriented_behavior',
+                  'S2_PEI_Perc_PEII_cop_oriented_behavior','S2_PEI_Perc_PEII_fem_oriented_behavior','S2_PEI_Perc_PEII_noncop_oriented_behavior',
+                  'S2_Perc_minprecopPEIB_cop_oriented_behavior','S2_Perc_minprecopPEIB_fem_oriented_behavior','S2_Perc_minprecopPEIB_noncop_oriented_behavior',
+                  'S2_Perc_minprecopPEII_cop_oriented_behavior','S2_Perc_minprecopPEII_fem_oriented_behavior','S2_Perc_minprecopPEII_noncop_oriented_behavior']
+
+for col in list_S2_columns:
+    results['x']=results[col]
+    results[col]=np.where(results['S2_TN_E']==0,np.NaN,results['x'])
+    
+                    
+results_sex_S1=results[[RATID,TREAT,EXP,'all_TN_M','all_TN_I','all_TN_E','all_TN_copulations','all_IR','all_III','all_CR','S1_TN_M','S1_TN_I','S1_TN_copulations','S1_L1M','S1_L1I','S1_L1B','S1_L1E',
+                      'S1LEB','S1LEI','S1PEIB','S1PEII','S1_IR','S1_IIIB','S1_IIII','S1_CR']]
+
+results_sex_S2=results[[RATID,TREAT,EXP,'S2_TN_M','S2_TN_I','S2_TN_copulations','S2_L1M','S2_L1I','S2_L1B','S2_L1E',
+                      'S2LEB','S2LEI','S2PEIB','S2PEII','S2_IR','S2_IIIB','S2_IIII','S2_CR']]
+
+
+results_mountbout_S1=results[[RATID,TREAT,EXP,'S1_TN_MB','S1_TD_MB','S1_MD_MB','S1_TD_TO','S1_MD_TO','S1_MD_IMBI','S1_TN_MB_singleM','S1_TN_MB_singleI',
+                    'S1_TN_MB_singleE','S1_TN_MB_single_copulations','S1_TN_MB_M','S1_TN_MB_I','S1_MN_MB_M','S1_MN_MB_I']]
+
+results_mountbout_S2=results[[RATID,TREAT,EXP,'S2_TN_MB','S2_TD_MB','S2_MD_MB','S2_TD_TO','S2_MD_TO','S2_MD_IMBI','S2_TN_MB_singleM','S2_TN_MB_singleI',
+                      'S2_TN_MB_singleE','S2_TN_MB_single_copulations','S2_TN_MB_M','S2_TN_MB_I','S2_MN_MB_M','S2_MN_MB_I']]
+
+results_mountbout_all=results[[RATID,TREAT,EXP,'all_TN_MB','all_TD_MB','all_MD_MB','all_TD_TO','all_MD_TO','all_MD_IMBI','all_TN_MB_singleM','all_TN_MB_singleI',
+                    'all_TN_MB_singleE','all_TN_MB_single_copulations','all_TN_MB_M','all_TN_MB_I','all_MN_MB_M','all_MN_MB_I']]
+
+results_behaviors_S1=results[[RATID,TREAT,EXP,'S1_TN_cop_oriented_behavior','S1_TN_fem_oriented_behavior','S1_TN_noncop_oriented_behavior',
+                      'S1_TD_cop_oriented_behavior','S1_TD_fem_oriented_behavior','S1_TD_noncop_oriented_behavior','S1_TN_clasping','S1_TN_genigrooming',
+                  'S1_TN_chasing','S1_TN_anosniff','S1_TN_head_to_fem','S1_TN_grooming','S1_TN_head_not_fem','S1_TD_M','S1_TD_I','S1_TD_E','S1_TD_clasping','S1_TD_genigrooming','S1_TD_chasing','S1_TD_anosniff','S1_TD_head_to_fem','S1_TD_grooming',
+                  'S1_TD_head_not_fem','S1_Perc_M','S1_Perc_I','S1_Perc_E','S1_Perc_cop_oriented_behavior','S1_Perc_fem_oriented_behavior','S1_Perc_noncop_oriented_behavior',
+                  'S1_Perc_clasping','S1_Perc_genigrooming','S1_Perc_chasing','S1_Perc_anosniff','S1_Perc_head_to_fem','S1_Perc_grooming','S1_Perc_head_not_fem']]
+
+results_behaviors_S2=results[[RATID,TREAT,EXP,'S2_TN_cop_oriented_behavior','S2_TN_fem_oriented_behavior','S2_TN_noncop_oriented_behavior',
+                      'S2_TD_cop_oriented_behavior','S2_TD_fem_oriented_behavior','S2_TD_noncop_oriented_behavior','S2_TN_clasping','S2_TN_genigrooming',
+                  'S2_TN_chasing','S2_TN_anosniff','S2_TN_head_to_fem','S2_TN_grooming','S2_TN_head_not_fem','S2_TD_M','S2_TD_I','S2_TD_E','S2_TD_clasping','S2_TD_genigrooming','S2_TD_chasing','S2_TD_anosniff','S2_TD_head_to_fem','S2_TD_grooming',
+                  'S2_TD_head_not_fem','S2_Perc_M','S2_Perc_I','S2_Perc_E','S2_Perc_cop_oriented_behavior','S2_Perc_fem_oriented_behavior','S2_Perc_noncop_oriented_behavior',
+                  'S2_Perc_clasping','S2_Perc_genigrooming','S2_Perc_chasing','S2_Perc_anosniff','S2_Perc_head_to_fem','S2_Perc_grooming','S2_Perc_head_not_fem']]
+
+results_behaviors_all=results[[RATID,TREAT,EXP,'all_TN_cop_oriented_behavior','all_TN_fem_oriented_behavior','all_TN_noncop_oriented_behavior',
+                      'all_TD_cop_oriented_behavior','all_TD_fem_oriented_behavior','all_TD_noncop_oriented_behavior','all_TN_clasping','all_TN_genigrooming',
+                  'all_TN_chasing','all_TN_anosniff','all_TN_head_to_fem','all_TN_grooming','all_TN_head_not_fem','all_TD_M','all_TD_I','all_TD_E','all_TD_clasping','all_TD_genigrooming','all_TD_chasing','all_TD_anosniff','all_TD_head_to_fem','all_TD_grooming',
+                  'all_TD_head_not_fem']]
+                      
+results_behaviors_minprecop_S1=results[[RATID,TREAT,EXP,'S1_TN_minprecop_cop_oriented_behavior','S1_TN_minprecop_fem_oriented_behavior','S1_TN_minprecop_noncop_oriented_behavior',
+                  'S1_TD_minprecop_cop_oriented_behavior','S1_TD_minprecop_fem_oriented_behavior','S1_TD_minprecop_noncop_oriented_behavior','S1_TN_precop_clasping',
+                  'S1_TN_minprecop_clasping','S1_TN_precop_genigrooming','S1_TN_minprecop_genigrooming','S1_TN_precop_chasing','S1_TN_minprecop_chasing',
+                  'S1_TN_precop_anosniff','S1_TN_minprecop_anosniff','S1_TN_precop_head_to_fem','S1_TN_minprecop_head_to_fem','S1_TN_precop_grooming',
+                  'S1_TN_minprecop_grooming','S1_TN_precop_head_not_fem','S1_TN_minprecop_head_not_fem','S1_TN_precop_head_to_fem','S1_TD_precop_clasping',
+                  'S1_TD_minprecop_clasping','S1_TD_precop_genigrooming',
+                  'S1_TD_minprecop_genigrooming','S1_TD_precop_chasing','S1_TD_minprecop_chasing','S1_TD_precop_anosniff','S1_TD_minprecop_anosniff',
+                  'S1_TD_precop_head_to_fem','S1_TD_minprecop_head_to_fem','S1_TD_precop_grooming','S1_TD_minprecop_grooming','S1_TD_precop_head_not_fem',
+                  'S1_TD_minprecop_head_not_fem','S1_Perc_minprecop_cop_oriented_behavior','S1_Perc_minprecop_fem_oriented_behavior','S1_Perc_minprecop_noncop_oriented_behavior',
+                  'S1_Perc_minprecop_clasping','S1_Perc_minprecop_genigrooming','S1_Perc_minprecop_chasing','S1_Perc_minprecop_anosniff','S1_Perc_minprecop_head_to_fem',
+                  'S1_Perc_minprecop_grooming','S1_Perc_minprecop_head_not_fem']]
+
+results_behaviors_minprecop_S2=results[[RATID,TREAT,EXP,'S2_TN_minprecop_cop_oriented_behavior','S2_TN_minprecop_fem_oriented_behavior','S2_TN_minprecop_noncop_oriented_behavior',
+                  'S2_TD_minprecop_cop_oriented_behavior','S2_TD_minprecop_fem_oriented_behavior','S2_TD_minprecop_noncop_oriented_behavior','S2_TN_precop_clasping',
+                  'S2_TN_minprecop_clasping','S2_TN_precop_genigrooming','S2_TN_minprecop_genigrooming','S2_TN_precop_chasing','S2_TN_minprecop_chasing',
+                  'S2_TN_precop_anosniff','S2_TN_minprecop_anosniff','S2_TN_precop_head_to_fem','S2_TN_minprecop_head_to_fem','S2_TN_precop_grooming',
+                  'S2_TN_minprecop_grooming','S2_TN_precop_head_not_fem','S2_TN_minprecop_head_not_fem','S2_TN_precop_head_to_fem','S2_TD_precop_clasping',
+                  'S2_TD_minprecop_clasping','S2_TD_precop_genigrooming',
+                  'S2_TD_minprecop_genigrooming','S2_TD_precop_chasing','S2_TD_minprecop_chasing','S2_TD_precop_anosniff','S2_TD_minprecop_anosniff',
+                  'S2_TD_precop_head_to_fem','S2_TD_minprecop_head_to_fem','S2_TD_precop_grooming','S2_TD_minprecop_grooming','S2_TD_precop_head_not_fem',
+                  'S2_TD_minprecop_head_not_fem','S2_Perc_minprecop_cop_oriented_behavior','S2_Perc_minprecop_fem_oriented_behavior','S2_Perc_minprecop_noncop_oriented_behavior',
+                  'S2_Perc_minprecop_clasping','S2_Perc_minprecop_genigrooming','S2_Perc_minprecop_chasing','S2_Perc_minprecop_anosniff','S2_Perc_minprecop_head_to_fem',
+                  'S2_Perc_minprecop_grooming','S2_Perc_minprecop_head_not_fem','S2_Perc_minprecopPEIB_cop_oriented_behavior','S2_Perc_minprecopPEIB_fem_oriented_behavior',
+                  'S2_Perc_minprecopPEIB_noncop_oriented_behavior','S2_Perc_minprecopPEII_cop_oriented_behavior','S2_Perc_minprecopPEII_fem_oriented_behavior',
+                  'S2_Perc_minprecopPEII_noncop_oriented_behavior']]
+                      
+results_rest=results[[RATID,TREAT,EXP,'S1_Perc_control','S2_Perc_control','S1_Perc_minprecop_control','S2_Perc_minprecop_control','S3_TN_M','S3_TN_I','S3_TN_copulations','S3_L1M','S3_L1I','S3_L1B','S3_L1E',
+                  'S3_IR','S3_CR','S1_TN_MB_exclsingle','S1_TD_MB_exclsingle','S1_MD_MB_exclsingle',
+                  'S1_MN_MB_M_exclsingle','S1_MN_MB_I_exclsingle','S2_TN_MB_exclsingle','S2_TD_MB_exclsingle','S2_MD_MB_exclsingle',
+                  'S2_MN_MB_M_exclsingle','S2_MN_MB_I_exclsingle','S3_TN_MB','S3_TD_MB','S3_MD_MB','S3_TD_TO','S3_MD_TO','S3_MD_IMBI','S3_TN_MB_singleM','S3_TN_MB_singleI',
+                  'S3_TN_MB_singleE','S3_TN_MB_single_copulations','S3_TN_MB_M','S3_TN_MB_I','S3_MN_MB_M','S3_MN_MB_I','S3_TN_MB_exclsingle','S3_TD_MB_exclsingle',
+                  'S3_MD_MB_exclsingle','S3_MN_MB_M_exclsingle','S3_MN_MB_I_exclsingle','all_TN_MB_exclsingle','all_TD_MB_exclsingle','all_MD_MB_exclsingle',
+                  'all_MN_MB_M_exclsingle','all_MN_MB_I_exclsingle']]           
+                 
+
+# Make a sheet to explain the columns
+data_info=pd.DataFrame()
+
+data_info['Code']=('No mark','S mark',RATID,TREAT,EXP,'L1M','L1I','L1E','L1B','TN_mount','TN_intro','TN_ejac','TN_copulations','IR','III','CR','LEB','LEI','PEIB','PEII','TN_MB',
+                  'TD_MB','MD_MB','TD_TO','MD_TO','MD_IMBI','TN_MB_single_mount','TN_MB_single_intro','TN_MB_single_ejac','TN_MB_single_cop','TN_MB_mount',
+                  'TN_MB_intro','MN_MB_mount','MN_MB_intro','TN_cop_oriented_behavior','TN_fem_oriented_behavior','TN_noncop_oriented_behavior','TD_cop_oriented_behavior',
+                  'TD_fem_oriented_behavior','TD_noncop_oriented_behavior','TN_PEI_cop_oriented_behavior','TN_PEI_fem_oriented_behavior','TN_PEI_noncop_oriented_behavior',
+                  'TD_PEI_cop_oriented_behavior','TD_PEI_fem_oriented_behavior','TD_PEI_noncop_oriented_behavior','TN_MB_exclsingle','TD_MB_exclsingle','MD_MB_exclsingle',
+                  'MN_MB_mount_exclsingle','MN_MB_intro_exclsingle','TN_clasping','TN_genigrooming','TN_chasing','TN_anosniff',
+                  'TN_head_to_fem','TN_grooming','TN_head_not_fem','TD_clasping','TD_genigrooming','TD_chasing','TD_anosniff','TD_head_to_fem','TD_grooming',
+                  'TD_head_not_fem','TD_PEI_clasping','TD_PEI_genigrooming','TD_PEI_chasing','TD_PEI_anosniff','TD_PEI_head_to_fem','TD_PEI_grooming','TD_PEI_head_not_fem',
+                  'TN_PEI_clasping','TN_PEI_genigrooming','TN_PEI_chasing','TN_PEI_anosniff','TN_PEI_head_to_fem','TN_PEI_grooming','TN_PEI_head_not_fem','precop','minprecop',
+                  'perc','perc_minprecop','perc control')
+
+data_info['Explanation']=('The data from the total experiment','The data from the ejaculatory series',
+                    'RatID',
+                    'Treatment',
+                    'Experiment',
+                    'Latency to first mount',
+                    'Latency to first intromission',
+                    'Latency to first ejaculation',
+                    'Latency to first behavior (mount or intromission)',
+                    'Total number of mounts',
+                    'Total number of intromissions',
+                    'Total number of ejaculations',
+                    'Total number of copulations (M+I+E)',
+                    'Intromission ratio = I/(I+M)',
+                    'Inter intromission interval = Total time test (all results) or ejaculation latency (series)/ number of intromissions',
+                    'Copulatory rate = (M+I+E)/Total time test (all results) or ejaculation latency (series)',
+                    'Latency to ejaculation from 1st behavior 1st (or 2nd) ejaculatory serie',
+                    'Latency to ejaculation from 1st intromissions 1st (or 2nd) ejaculatory serie',
+                    'postejaculatory interval to 1st behavior 1st (or 2nd) ejaculatory serie',
+                    'postejaculatory interval to 1st intromissions 1st (or 2nd) ejaculatory serie',
+                    'Total number of mount bouts',
+                    'Total duration of mount bouts (1sec for single copulation)',
+                    'Mean duration of mount bouts',
+                    'Total duration of time-outs',
+                    'Mean duration of time-outs',
+                    'Mean time from first mount of one mount bout to the first mount of the next mount bout',
+                    'Total number of single mounts as mount bout',
+                    'Total number of single intromissions as mount bout',
+                    'Total number of single ejaculations as mount bout',
+                    'Total number of single copulations as mount bout',
+                    'Total number of mounts in a mount bout (excluding the single copulations)',
+                    'Total number of intromissions in a mount bout (excluding the single copulations)',
+                    'Mean number of mounts in a mount bout (excluding the single copulations)',
+                    'Mean number of intromissions in a mount bout (excluding the single copulations)',
+                    'Total number of copulation-oriented behavior (Mount, intromission, ejaculation, clasping, genital grooming, chasing, anogenital sniffing)',
+                    'Total number of female-oriented behavior (Copulation-oriented behavior + head towards female)',
+                    'Total number of non-copulation-oriented behavior (Other grooming, head not towards female)',
+                    'Total duration of copulation-oriented behavior (Mount, intromission, ejaculation, clasping, genital grooming, chasing, anogenital sniffing)',
+                    'Total duration of female-oriented behavior (Copulation-oriented behavior + head towards female)',
+                    'Total duration of non-copulation-oriented behavior (Other grooming, head not towards female)',
+                    'Total number of copulation-oriented behavior during PEI(Mount, intromission, ejaculation, clasping, genital grooming, chasing, anogenital sniffing)',
+                    'Total number of female-oriented behavior during PEI(Copulation-oriented behavior + head towards female)',
+                    'Total number of non-copulation-oriented behavior during PEI(Other grooming, head not towards female)',
+                    'Total duration of copulation-oriented behavior during PEI (Mount, intromission, ejaculation, clasping, genital grooming, chasing, anogenital sniffing)',
+                    'Total duration of female-oriented behavior during PEI(Copulation-oriented behavior + head towards female)',
+                    'Total duration of non-copulation-oriented behavior during PEI (Other grooming, head not towards female)',
+                    'Total number of mount bouts excluding the single copulations',
+                    'Total duratuin of mount bouts excluding the single copulations',
+                    'Mean duration of mount bouts excluding the single copulations',
+                    'Mean number of mounts in mount bouts excluding the single copulations',
+                    'Mean number of intromissions in mount bouts excluding the single copulationsTotal number of clasping (Mounting the female without pelvic thrusting)',
+                    'Total number of clasping (Mounting the female without pelvic thrusting)',
+                    'Total number of genital grooming (Autogrooming of anogenital region)',
+                    'Total number of chasing (Running after the female)',
+                    'Total number of anogenital sniffing (Sniffing the anogenital region of the female)',
+                    'Total number of head towards female (Looking at the female while not engaging in other behavior)',
+                    'Total number of other grooming (Autogrooming in other regions than anogenital)',
+                    'Total number of head not towards female (Any behavior that is not oriented towards the female, such as walking, sniffing the environment, and looking at another direction than the female)',
+                    'Total duration of clasping (Mounting the female without pelvic thrusting)',
+                    'Total duration of genital grooming (Autogrooming of anogenital region)',
+                    'Total duration of chasing (Running after the female)',
+                    'Total duration of anogenital sniffing (Sniffing the anogenital region of the female)',
+                    'Total duration of head towards female (Looking at the female while not engaging in other behavior)',
+                    'Total duration of other grooming (Autogrooming in other regions than anogenital)',
+                    'Total duration of head not towards female (Any behavior that is not oriented towards the female, such as walking, sniffing the environment, and looking at another direction than the female)',
+                    'Total duration of clasping during PEI (Mounting the female without pelvic thrusting)',
+                    'Total duration of genital grooming during PEI (Autogrooming of anogenital region)',
+                    'Total duration of chasing during PEI (Running after the female)',
+                    'Total duration of anogenital sniffing during PEI (Sniffing the anogenital region of the female)',
+                    'Total duration of head towards female during PEI (Looking at the female while not engaging in other behavior)',
+                    'Total duration of other grooming during PEI (Autogrooming in other regions than anogenital)',
+                    'Total duration of head not towards female during PEI (Any behavior that is not oriented towards the female, such as walking, sniffing the environment, and looking at another direction than the female)',
+                    'Total number of clasping during PEI (Mounting the female without pelvic thrusting)',
+                    'Total number of genital grooming during PEI (Autogrooming of anogenital region)',
+                    'Total number of chasing during PEI (Running after the female)',
+                    'Total number of anogenital sniffing during PEI (Sniffing the anogenital region of the female)',
+                    'Total number of head towards femaleduring PEI  (Looking at the female while not engaging in other behavior)',
+                    'Total number of other grooming during PEI (Autogrooming in other regions than anogenital)',
+                    'Total number of head not towards female during PEI (Any behavior that is not oriented towards the female, such as walking, sniffing the environment, and looking at another direction than the female)',
+                    'Number and duration of behavior taking place before the first copulation',
+                    'Number and duration of behavior when the behavior before first copulation is taken off',
+                    'Percentage of behavior performed in the period stated', 'percentage of behavior performed in period after 1st behavior (not intromission)',
+                    'Control whether percentage of female oriented behavior and noncopulatory behavior matches the 100%. If lower, not the full 1800 seconds were scored - can be found on "Results Rest" sheet')
+
+print("results finished")
+
+# Save the dataframes to excel
+dfs_print={'Results Sex_S1':results_sex_S1,'Results Sex_S2':results_sex_S2,
+            'Results Mountbout_S1':results_mountbout_S1,'Results Mountbout_S2':results_mountbout_S2,
+            'Results Mountbout_all':results_mountbout_all,'Results Behaviors_S1':results_behaviors_S1,
+            'Results Behaviors_S2':results_behaviors_S2,'Results Behaviors_all':results_behaviors_all,
+            'Results Behaviors_minprecop_S1':results_behaviors_minprecop_S1,'Results Behaviors_minprecop_S2':results_behaviors_minprecop_S2,
+            'Results rest':results_rest}
+
+
+
+# # Save the dataframes to excel for check
+writer1 = pd.ExcelWriter(out_path1, engine='xlsxwriter')
+data_info.to_excel(writer1, sheet_name='Information')
+results_sex_S1.to_excel(writer1, sheet_name='Results Sex_S1')
+results_sex_S2.to_excel(writer1, sheet_name='Results Sex_S2')
+results_mountbout_S1.to_excel(writer1, sheet_name='Results Mountbout_S1')
+results_mountbout_S2.to_excel(writer1, sheet_name='Results Mountbout_S2')
+results_mountbout_all.to_excel(writer1, sheet_name='Results Mountbout_all')
+results_behaviors_S1.to_excel(writer1, sheet_name='Results Behaviors_S1')
+results_behaviors_S2.to_excel(writer1, sheet_name='Results Behaviors_S2')
+results_behaviors_all.to_excel(writer1, sheet_name='Results Behaviors_all')
+results_behaviors_minprecop_S1.to_excel(writer1, sheet_name='Results Behaviors_minprecop_S1')
+results_behaviors_minprecop_S2.to_excel(writer1, sheet_name='Results Behaviors_minprecop_S2')
+results_rest.to_excel(writer1, sheet_name='Results rest')
+writer1.save()
+writer1.close()
+
+
+# Drop column RatID and Experiment in order to be able to calculate quartiles
+results_sex_S1=results_sex_S1.drop([RATID,EXP], axis=1)
+results_sex_S2=results_sex_S2.drop([RATID,EXP], axis=1)
+results_mountbout_S1=results_mountbout_S1.drop([RATID,EXP], axis=1)
+results_mountbout_S2=results_mountbout_S2.drop([RATID,EXP], axis=1)
+results_mountbout_all=results_mountbout_all.drop([RATID,EXP], axis=1)
+results_behaviors_S1=results_behaviors_S1.drop([RATID,EXP], axis=1)
+results_behaviors_S2=results_behaviors_S2.drop([RATID,EXP], axis=1)
+results_behaviors_all=results_behaviors_all.drop([RATID,EXP], axis=1)
+results_behaviors_minprecop_S1=results_behaviors_minprecop_S1.drop([RATID,EXP], axis=1)
+results_rest=results_rest.drop([RATID,EXP], axis=1)
+
+# Make a list of all result dataframes
+list_df_results=[results_sex_S1,results_sex_S2,results_mountbout_S1,results_mountbout_S2,results_mountbout_all,results_behaviors_S1,results_behaviors_S2,
+                  results_behaviors_all,results_behaviors_minprecop_S1,results_rest]
+
+# Statistics on the data
+# Make lists with the titles for the keys of the dictionairies for the statistics
+list_mean_titles=['mean_sex_S1','mean_sex_S2','mean_mountbout_S1','mean_mountbout_S2','mean_mountbout_all',
+                  'mean_behaviors_S1','mean_behaviors_S2','mean_behaviors_all','mean_behaviors_minprecop_S1','mean_rest']
+
+list_median_titles=[]
+list_std_titles=[]
+list_sem_titles=[]
+list_var_titles=[]
+list_q25_titles=[]
+list_q75_titles=[]
+list_semedian_titles=[]
+list_stat_titles=[]
+list_results_titles=[]
+
+for i, stat in enumerate(list_mean_titles):
+    temp=stat.replace('mean','median')
+    list_median_titles.append(temp)
+    temp=stat.replace('mean','std')
+    list_std_titles.append(temp)
+    temp=stat.replace('mean','sem')
+    list_sem_titles.append(temp)
+    temp=stat.replace('mean','var')
+    list_var_titles.append(temp)
+    temp=stat.replace('mean','q25')
+    list_q25_titles.append(temp)
+    temp=stat.replace('mean','q75')
+    list_q75_titles.append(temp)
+    temp=stat.replace('mean','semedian')
+    list_q75_titles.append(temp)
+    temp=stat.replace('mean_','')
+    list_stat_titles.append(temp)
+    temp=stat.replace('mean_','')
+    list_results_titles.append(temp)
+
+# Make dictionairy for the stats    
+dict_mean={}
+dict_median={}
+dict_std={}
+dict_sem={}
+dict_var={}
+dict_q25={}
+dict_q75={}
+dict_semedian={}
+
+for k, df_result in enumerate(list_df_results):
+    dict_mean[k]=df_result.groupby([TREAT]).mean()
+    dict_median[k]=df_result.groupby([TREAT]).median()
+    dict_sem[k]=df_result.groupby([TREAT]).sem()
+    dict_std[k]=df_result.groupby([TREAT]).std()
+    dict_var[k]=df_result.groupby([TREAT]).var()
+    dict_q25[k]=df_result.groupby([TREAT]).quantile(0.25)
+    dict_q75[k]=df_result.groupby([TREAT]).quantile(0.75)
+
+    # Calculate the SEM of the median
+    # Calculate n per group and squareroot for sem median
+    
+    # dict_semedian[k]=(((df_result.groupby([TREAT]).quantile(0.75))-(df_result.groupby([TREAT]).quantile(0.25)))/(df_result.groupby([TREAT]).size()*1.34))
+
+# Rename the keys to the right stat names
+dict_mean = dict(zip(list_stat_titles, list(dict_mean.values())))
+dict_median = dict(zip(list_stat_titles, list(dict_median.values())))
+dict_std = dict(zip(list_stat_titles, list(dict_std.values())))
+dict_sem = dict(zip(list_stat_titles, list(dict_sem.values())))
+dict_var = dict(zip(list_stat_titles, list(dict_var.values())))
+dict_q25 = dict(zip(list_stat_titles, list(dict_q25.values())))
+dict_q75 = dict(zip(list_stat_titles, list(dict_q75.values())))
+# dict_semedian = dict(zip(list_stat_titles, list(dict_semedian.values())))
+
+# Now make dataframes from the dictionairies
+df_mean=pd.DataFrame.from_dict({(i,j): dict_mean[i][j] 
+                            for i in dict_mean.keys() 
+                            for j in dict_mean[i].keys()},
+                        orient='index')
+df_mean=df_mean.drop(columns=['S1_TN_precop_head_to_fem'])
+df_mean.columns = ['mean_'+ str(col) for col in df_mean.columns]
+
+df_sem=pd.DataFrame.from_dict({(i,j): dict_sem[i][j] 
+                            for i in dict_sem.keys() 
+                            for j in dict_sem[i].keys()},
+                        orient='index')
+df_sem=df_sem.drop(columns=['S1_TN_precop_head_to_fem'])
+df_sem.columns = ['sem_'+ str(col) for col in df_sem.columns]
+
+df_median=pd.DataFrame.from_dict({(i,j): dict_median[i][j] 
+                            for i in dict_median.keys() 
+                            for j in dict_median[i].keys()},
+                        orient='index')
+df_median=df_median.drop(columns=['S1_TN_precop_head_to_fem'])
+df_median.columns = ['median_'+ str(col) for col in df_median.columns]
+
+df_q25=pd.DataFrame.from_dict({(i,j): dict_q25[i][j] 
+                            for i in dict_q25.keys() 
+                            for j in dict_q25[i].keys()},
+                        orient='index')
+df_q25=df_q25.drop(columns=['S1_TN_precop_head_to_fem'])
+df_q25.columns = ['q25_'+ str(col) for col in df_q25.columns]
+
+df_q75=pd.DataFrame.from_dict({(i,j): dict_q75[i][j] 
+                            for i in dict_q75.keys() 
+                            for j in dict_q75[i].keys()},
+                        orient='index')
+df_q75=df_q75.drop(columns=['S1_TN_precop_head_to_fem'])
+df_q75.columns = ['q75_'+ str(col) for col in df_q75.columns]
+
+# df_semedian=pd.DataFrame.from_dict({(i,j): dict_q75[i][j] 
+#                             for i in dict_semedian.keys() 
+#                             for j in dict_semedian[i].keys()},
+#                         orient='index')
+# df_semedian=df_semedian.drop(columns=['S1_TN_precop_head_to_fem'])
+# df_semedian.columns = ['semedian_'+ str(col) for col in df_semedian.columns]
+
+
+df_std=pd.DataFrame.from_dict({(i,j): dict_std[i][j] 
+                            for i in dict_std.keys() 
+                            for j in dict_std[i].keys()},
+                        orient='index')
+df_std=df_std.drop(columns=['S1_TN_precop_head_to_fem'])
+df_std.columns = ['std_'+ str(col) for col in df_std.columns]
+
+df_var=pd.DataFrame.from_dict({(i,j): dict_var[i][j] 
+                            for i in dict_var.keys() 
+                            for j in dict_var[i].keys()},
+                        orient='index')
+df_var=df_var.drop(columns=['S1_TN_precop_head_to_fem'])
+df_var.columns = ['var_'+ str(col) for col in df_var.columns]
+
+
+
+df_stat=pd.concat([df_mean,df_sem,df_median,df_std,df_var,df_q25,df_q75], sort=False, axis=1)
+
+# Just to get notification this part is finished
+print("stats finished")
+
+# To make the excel sheet nice
+# Make a list of all result dataframes
+
+list_index=[]
+for i, name in enumerate(list_mean_titles):
+    temp=name.replace('mean_','')
+    list_index.append(temp)
+
+list_sex_S1=[x for x in list_index if 'sex_S1' in x]
+list_sex_S2=[x for x in list_index if 'sex_S2' in x]
+list_mountbout_S1=[x for x in list_index if 'mountbout_S1' in x]
+list_mountbout_S2=[x for x in list_index if 'mountbout_S2' in x]
+list_mountbout_all=[x for x in list_index if 'mountbout_all' in x]
+list_behaviors_S1=[x for x in list_index if 'behaviors_S1' in x]
+list_behaviors_S2=[x for x in list_index if 'behaviors_S2' in x]
+list_behaviors_all=[x for x in list_index if 'behaviors_all' in x]
+list_behaviors_minprecop_S1=[x for x in list_index if 'behaviors_minprecop_S1' in x]
+list_rest=[x for x in list_index if 'rest' in x]
+
+df_stat_sex_S1=df_stat.loc[(list_sex_S1),:]
+df_stat_sex_S2=df_stat.loc[(list_sex_S2),:]
+df_stat_mountbout_S1=df_stat.loc[(list_mountbout_S1),:]
+df_stat_mountbout_S2=df_stat.loc[(list_mountbout_S2),:]
+df_stat_mountbout_all=df_stat.loc[(list_mountbout_all),:]
+df_stat_behaviors_S1=df_stat.loc[(list_behaviors_S1),:]
+df_stat_behaviors_S2=df_stat.loc[(list_behaviors_S2),:]
+df_stat_behaviors_all=df_stat.loc[(list_behaviors_all),:]
+df_stat_behaviors_minprecop_S1=df_stat.loc[(list_behaviors_minprecop_S1),:]
+df_stat_rest=df_stat.loc[(list_rest),:]
+
+# Make dictionary of the stats
+dfs_stat_print={'Stats sex_S1':df_stat_sex_S1,'Stats sex_S2':df_stat_sex_S2,'Stats mountbout_S1':df_stat_mountbout_S1,
+                'Stats mountbout_S2':df_stat_mountbout_S2,'Stats mountbout_all':df_stat_mountbout_all,
+                'Stats behaviors_S1':df_stat_behaviors_S1,'Stats behaviors_S2':df_stat_behaviors_S2,
+                'Stats behaviors_all':df_stat_behaviors_all,'Stat behaviors_minprecop_S1':df_stat_behaviors_minprecop_S1,
+                'Stats rest':df_stat_rest}
+
+# Write stats to excel file:
+writer2 = pd.ExcelWriter(out_path2, engine='xlsxwriter')
+data_info.to_excel(writer2, sheet_name='Information', index=False)  # send df to writer
+worksheet2 = writer2.sheets['Information']  # pull worksheet object
+for idx, col in enumerate(data_info):  # loop through all columns
+    series = data_info[col]
+    max_len = max((
+        series.astype(str).map(len).max(),  # len of largest item
+        len(str(series.name))  # len of column name/header
+        )) + 1  # adding a little extra space
+    worksheet2.set_column(idx, idx, max_len)  # set column width
+
+for sheetname, df in dfs_stat_print.items():  # loop through `dict` of dataframes
+    df.to_excel(writer2, sheet_name=sheetname)  # send df to writer
+    worksheet = writer2.sheets[sheetname]  # pull worksheet object
+    for idx, col in enumerate(df):  # loop through all columns
+        series = df[col]
+        max_len = max((
+            series.astype(str).map(len).max(),  # len of largest item
+            len(str(series.name))  # len of column name/header
+            )) + 1  # adding a little extra space
+        worksheet.set_column(idx, idx, max_len)  # set column width
+writer2.save()
+writer2.close()
+
+
+    
+    
+  
