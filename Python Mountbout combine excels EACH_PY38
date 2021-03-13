@@ -1,0 +1,113 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Dec 16 13:05:33 2020 for python 3.8
+@author: Eelke Snoeren
+
+This script will automaticaly put all excel files in 1 file
+- made for NFR005 mountbout scripts for each mount bout data
+
+TO DO BEFOREHAND
+1) change the directory to the file where you have saved your files
+2) define output file name
+3) copy paste the file names that need combining
+4) copy paste the sheet names
+5) if you want to add the data_info sheet, copy paste this from another python script
+
+"""
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from itertools import chain
+sns.set()
+from PIL import Image
+import glob
+import os
+from matplotlib.backends.backend_pdf import PdfPages
+import multiprocessing as mp
+from pandas import ExcelWriter
+import openpyxl
+pd.set_option('use_inf_as_na', True)
+
+
+# HOME- Define the directory in which you stored the data (use / instead of \)
+directory= "C:/Users/esn001/Documents/Python 3.8/Data projects/Patty mountbout/Output"
+
+# # WORK- Define the directory in which you stored the data (use / instead of \)
+# directory= "C:/Users/esn001/OneDrive - UiT Office 365/python/Python 3.8/Data projects/Patty mountbout/Output"
+
+# Define output file names
+out_path1 = "%s/NFR005_TOTAL_EACH_mountbout_results.xlsx" % directory
+
+# Create general file and sheet name holders
+file1 = 'NFR005GR_mountbout_EACH_results.xlsx'
+file2 = 'NFR005TR_BL_mountbout_EACH_results.xlsx'
+file3 = 'NFR005TR_COR_mountbout_EACH_results.xlsx'
+file4 = 'NFR005TX_mountbout_EACH_results.xlsx'
+
+files = [file1,file2,file3,file4]
+os.chdir(directory)
+
+sheet1 = "Information"
+sheet2 = 'Results_S1'
+sheet3 = 'Results_S2'
+
+sheets = [sheet2,sheet3]    
+
+df1=pd.DataFrame()
+df2=pd.DataFrame()
+
+for file in files:  # loop through Excel files
+        df = pd.read_excel(file, sheet_name=sheet2)
+        df1 = df1.append(df)
+        df = pd.read_excel(file, sheet_name=sheet3)
+        df2 = df2.append(df)
+
+
+# Make a sheet to explain the columns
+data_info=pd.DataFrame()
+
+data_info['Code']=('RatID', 'Treatment', 'Experiment', 'MB_type',
+        'MB_number', 'TD_MB', 'TD_TO', 'MB_First_Cop', 'MB_Last_Cop', 'MB_TN_M',
+        'MB_TN_I', 'MB_TN_E', 'MB_TN_genigroom', 'MB_TN_cop', 'MB_TD_cop', 'MB_IR',
+        'MB_III', 'MB_CR', 'MB_ICI', 'MB_TO/MB_TD', 'MB_TO/TD_cop', 'MB_TO/IR',
+        'MB_TO/III', 'MB_TO/CR','MB_TD_M','MB_TD_I','MB_TD_E','MB_TD_genigroom')
+
+data_info['Explanation']=('RatID',
+                    'Treatment',
+                    'Experiment',
+                    'Type of mount bout (SC=single copulation,MB=more copulations',
+                    'The number of the mount bout (inclusief single copulations)',
+                    'Total duration of this mount bout',
+                    'Total duration of the time out after this mount bout',
+                    'First copulation type of this mount bout',
+                    'Last copulation type of this mount bout (same as first in case of SC)',
+                    'Total number of mounts in this mount bout',
+                    'Total number of intromissions in this mount bout',
+                    'Total number of ejaculations in this mount bout',
+                    'Total number of genital grooming in this mount bout',
+                    'Total number of copulations (M+I+E) in this mount bout',
+                    'Total duration of copulations (M+I+E)in this mount bout',
+                    'Intromission ratio = I/(I+M) in this mount bout (only for MB, not SC)',
+                    'Inter intromission interval = Total time test (all results) or ejaculation latency (series)/ number o,f intromissions in this mount bout (only for MB, not SC)',
+                    'Copulatory rate = (M+I+E)/Total time test (all results) or ejaculation latency (series) in this mount bout (only for MB, not SC)',
+                    'Inter copulatory interval = duration MB/TN copulations (only for MB, not SC)',
+                    'Time-out/mount bout duration',
+                    'Time-out / TD copulations ',
+                    'Time-out/ Intromission Ration of the mount bout',
+                    'Time-out/ inter intromission interval of the mount bout',
+                    'Time-out/ copulation rate of the mount bout',
+                    'Total duration mounts',
+                    'Total duration intromissions',
+                    'Total duration ejaculations',
+                    'Total duration genital grooming')
+
+
+
+writer1 = pd.ExcelWriter(out_path1, engine='xlsxwriter')
+data_info.to_excel(writer1, sheet_name='Information')
+df1.to_excel(writer1, sheet_name='Results_S1')
+df2.to_excel(writer1, sheet_name='Results_S2')
+writer1.save()
+writer1.close()
