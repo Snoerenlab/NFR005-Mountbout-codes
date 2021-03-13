@@ -1,0 +1,678 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Aug 16 13:05:33 2020 for python 3.8
+@author: Eelke Snoeren
+
+This script will automaticaly analyze mountbout data from rawdata files
+from Noldus observer XT12.5. It will save an excel sheet with the results
+- It is made specially for the cohort from Texas
+- It gives all information per mount bout
+
+TO DO BEFOREHAND
+1) Save a copy of the script in your project folder
+2) CHANGE THE PATH OF PYTHON TO YOUR DATA FOLDER AND CHANGE THE OUTPATH
+3) CHANGE THE FILENAME TO THE RIGHT DOCUMENT
+4) CREATE A TREATMENT FILE
+5) FILL IN TREATMENT GROUPS 
+6) FILL IN THE TREATMENT NAME FOR EACH WEEK (e.g. ip1, ip2, ic1, ic2, ic3))
+7) FILL IN TEST TIME
+8) CHECK THE BEHAVIORS AND BEHAVIORAL PARAMETERS THAT WERE CALCULATED
+9) CHECK WHETHER THE EXCEL OUTPUT IS THE SAME
+10) CHECK WHETHER THE SHEETS HAVE SIMILAR NAMES
+"""
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from itertools import chain
+sns.set()
+from PIL import Image
+import glob
+import os
+from matplotlib.backends.backend_pdf import PdfPages
+import multiprocessing as mp
+from pandas import ExcelWriter
+import openpyxl
+pd.set_option('use_inf_as_na', True)
+
+
+# HOME- Define the directory in which you stored the data (use / instead of \)
+directory= "C:/Users/esn001/Documents/Python 3.8/Data projects/Patty mountbout"
+directory_stat= "C:/Users/esn001/Documents/Python 3.8/Data projects/Patty mountbout/Output"
+
+# # WORK- Define the directory in which you stored the data (use / instead of \)
+# directory= "C:/Users/esn001/OneDrive - UiT Office 365/python/Python 3.8/Data projects/Patty mountbout"
+# directory_stat= "C:/Users/esn001/OneDrive - UiT Office 365/python/Python 3.8/Data projects/Patty mountbout/Output"
+
+# Assign spreadsheet filename to `file`
+file1 = 'NFR005TX_BL2_rawdata.xlsx'
+file2 = 'NFR005TX_T1T2T3_rawdata.xlsx'
+file3 = 'NFR005TX _T4T5_rawdata.xlsx'
+file_treatment = 'NFR005TX_Treatments.xlsx'
+file_stat = "%s/NFR005TX_mountbout_EACH_statistics.xlsx" % directory_stat
+
+# Define the directory from which the files should come
+os.chdir(directory)
+
+# Define output file names
+out_path1 = "%s/Output/NFR005TX_mountbout_EACH_results.xlsx" % directory
+out_path2 = "%s/Output/NFR005TX_mountbout_EACH_statistics.xlsx" % directory
+out_path3 = "%s/Output/NFR005TX_mountbout_EACH_testresults.xlsx" % directory
+
+# Fill in treatment weeks
+Treatment1 = 'BL2'
+Treatment2 = 'Test1'
+Treatment3 = 'Test2'
+Treatment4 = 'Test3'
+Treatment5 = 'Test4'
+Treatment6 = 'Test5'
+
+# Fill in time test
+Timetest = 1800
+
+# Load and clean up of the data file of the rawdata for DataFrames
+xlsx_data = pd.ExcelFile(file1)
+file_sheets_data = []
+for sheet in xlsx_data.sheet_names:
+    file_sheets_data.append(xlsx_data.parse(sheet))
+xlsx_data = pd.ExcelFile(file2)
+for sheet in xlsx_data.sheet_names:
+    file_sheets_data.append(xlsx_data.parse(sheet))
+xlsx_data = pd.ExcelFile(file3)
+for sheet in xlsx_data.sheet_names:
+    file_sheets_data.append(xlsx_data.parse(sheet))
+
+dataraw = pd.concat(file_sheets_data)
+dataraw = dataraw.dropna(axis=0, how='all')
+
+# Load and clean up of the data file of the viruscode for DataFrames
+xlsx_treatment = pd.ExcelFile(file_treatment)
+file_sheets_treatment = []
+for sheet in xlsx_treatment.sheet_names:
+    file_sheets_treatment.append(xlsx_treatment.parse(sheet))
+treatmentcodes = pd.concat(file_sheets_treatment)
+treatmentcodes = treatmentcodes.dropna(axis=0, how='all')
+
+# Make dictionary from the treatmentcodes dataframe
+dict_test1 = dict(zip(treatmentcodes['RatID'], treatmentcodes['BL2']))
+dict_test2 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 1']))
+dict_test3 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 2']))
+dict_test4 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 3']))
+dict_test5 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 4']))
+dict_test6 = dict(zip(treatmentcodes['RatID'], treatmentcodes['Test 5']))
+
+# Fill out your short column names behind the definition a-z
+A='Index'
+B='Date_Time_Absolute_dmy_hmsf'
+C='Date_dmy'
+D='Time_Absolute_hms'
+E='Time_Absolute_f'
+F='Time_Relative_hmsf'
+G='Time_Relative_hms'
+H='Time_Relative_f'
+I='Time_Relative_sf' # Time
+J='Duration_sf'
+K='Observation'
+L='Event_Log'
+M='empty'
+N='Behavior'
+O='Event_Type'
+P='Comment'
+
+# For the rest of the document we will use these new terms for the "important behaviors"
+TIME='Time'
+OBS='Observation'
+BEH='Behavior'
+EVENT='Event_Type'
+RATID='RatID' # RatID number with virus code
+RATIDRAW='RatID_raw' # number during experiment for blinding
+TREAT='Treatment'
+VIRUS='Virus'
+EXP='Experiment'
+
+# Fill out your treatment/stimulus behind definition SA-SZ
+SA='CTR-vehicle'
+SB='CTR-CNO'
+SC='STIM-vehicle'
+SD='STIM-CNO'
+SE='INH-vehicle'
+SF='INH-CNO' 
+
+Stimuli_values= (SA,SB,SC,SD,SE,SF)
+
+# Fill out your behavioral observations behind definition BA-BZ and BSA-BSZ
+BA='Mount'
+BB='Intromission'
+BC='Ejaculation'
+BD='Clasping'
+BE='Genital grooming'
+BF='Chasing'
+BG='Anogenital sniffing'
+BH='Head towards female'
+BI='Other grooming'
+BJ='Head not towards female'
+
+# Fill in your extra behavioral calculations behind definition EA-EZ
+EA='copulations' # mounts, intromissions and ejaculations
+EB='PEI' # post-ejaculatory interval - Time from ejaculation to first mount/intromission
+EC='IMBI' # Inter-mount-bout interval - Time from first mount of mountbout to first mount of next mountbout
+ED='TO' # Time-out - Interval from the last mount of mountbout to the first mount of next mountbout
+EE='Copulation-oriented behavior' # EA+BD+BE+BF+BG
+EF='Female-oriented behavior' # EE+BH
+EG='Non copulation-oriented behavior' # BI+BJ
+
+# Make a list of the standard behaviors and the to be calculated behaviors
+list_sex=list((BA,BB,BC))
+list_behaviors=list((BA,BB,BC,BD,BE,BF,BG,BH,BI,BJ))
+list_other_behaviors=list((BD,BE,BF,BG,BH,BI,BJ))
+list_behaviors_extra=list((EA,EB,EC,ED,EE,EF,EG))
+list_mb_behaviors=list((BA,BB,BC,BE))
+
+# Rename columns (add or remove letters according to number of columns)
+dataraw.columns = [B,C,D,E,F,G,H,I,J,K,L,M,N]
+dataraw.columns=[B,C,D,E,F,G,H,TIME,J,OBS,L,BEH,EVENT]
+
+# Make a new datafile with selected columns
+data_full=dataraw[[TIME,OBS,BEH,EVENT]]
+
+# Make a column for the experiment and RatID_raw (this is the number used for the rats)
+data_full=data_full.assign(Experiment =lambda x: data_full.Observation.str.split('_').str[1])
+data_full=data_full.assign(RatID =lambda x: data_full.Observation.str.split('_').str[-1])
+
+# # Make a column for the RatID
+# data_full[RATID]=pd.to_numeric(data_full[RATIDRAW])
+# data_full[RATID]=data_full[RATID].map(dict_viruscode)
+     
+# Make a column for the treatment week 1
+data_full['Treatment1']=pd.to_numeric(data_full[RATID])
+data_full['Treatment1']=data_full['Treatment1'].map(dict_test1)
+
+# Make a column for the treatment week 2
+data_full['Treatment2']=pd.to_numeric(data_full[RATID])
+data_full['Treatment2']=data_full['Treatment2'].map(dict_test2)
+
+# Make a column for the treatment week 3
+data_full['Treatment3']=pd.to_numeric(data_full[RATID])
+data_full['Treatment3']=data_full['Treatment3'].map(dict_test3)
+
+# Make a column for the treatment week 4
+data_full['Treatment4']=pd.to_numeric(data_full[RATID])
+data_full['Treatment4']=data_full['Treatment4'].map(dict_test4)
+
+# Make a column for the treatment week 5
+data_full['Treatment5']=pd.to_numeric(data_full[RATID])
+data_full['Treatment5']=data_full['Treatment5'].map(dict_test5)
+
+# Make a column for the treatment week 6
+data_full['Treatment6']=pd.to_numeric(data_full[RATID])
+data_full['Treatment6']=data_full['Treatment6'].map(dict_test6)
+
+# Make a column for the treatment
+data_full[TREAT]=np.where(data_full[EXP]==Treatment1, data_full['Treatment1'], '')
+data_full[TREAT]=np.where(data_full[EXP]==Treatment2, data_full['Treatment2'],data_full[TREAT])
+data_full[TREAT]=np.where(data_full[EXP]==Treatment3, data_full['Treatment3'],data_full[TREAT])
+data_full[TREAT]=np.where(data_full[EXP]==Treatment4, data_full['Treatment4'],data_full[TREAT])
+data_full[TREAT]=np.where(data_full[EXP]==Treatment5, data_full['Treatment5'],data_full[TREAT])
+data_full[TREAT]=np.where(data_full[EXP]==Treatment6, data_full['Treatment6'],data_full[TREAT])
+
+# Delete the rows that "end" a behavior
+# Drop a row by condition
+data_full=data_full[data_full.Event_Type != 'State stop']
+
+
+# Clean up the file by selecting relevant columns and reorganize
+# data_full=data_full.drop(columns=['Treatment1','Treatment2','Treatment3','Treatment4','Treatment5'])
+data_full=data_full[[OBS,EXP,RATID,TREAT,TIME,BEH]]
+
+data_full = data_full.sort_values(by=[OBS,TIME], ascending = True)
+
+# Calculate the durations of each behavior
+data_full= data_full.sort_values(by=[OBS,TIME])
+data_full['time_diff'] = data_full[TIME].diff()
+
+# Delete the times there were the RatID of next rat starts
+data_full.loc[data_full.RatID != data_full.RatID.shift(), 'time_diff'] = None
+
+# Mark beginning per rat
+data_full = data_full.sort_values(by=[OBS,TIME])
+data_full['obs_num'] = data_full.groupby(OBS)[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+data_full = data_full.sort_values(by=[OBS,TIME], ascending = False)
+data_full['obs_num_back'] = data_full.groupby(OBS)[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+data_full = data_full.sort_values(by=[OBS,TIME])
+
+# Correct time of behaviors by distracting time first behavior
+data_full['starttest']=np.where((data_full['obs_num']==1),data_full[TIME],np.NaN)
+data_full['starttest'].fillna(method = "ffill", inplace=True)
+
+# Now put the time differences to the right behavior in column 'durations'
+data_full['durations'] = data_full.time_diff.shift(-1)
+data_full['durations'] = np.where((data_full['obs_num_back']==1),1,data_full['durations'])
+
+data_full['durations_cor'] = data_full.durations.shift(-1)
+data_full['durations_cor']=np.where((data_full['obs_num_back']==1),np.NaN,data_full['durations_cor'])
+
+# Make a new column that makes an unique name for the behaviors per rat
+data_full['beh_num_trick'] = data_full[BEH].map(str) + data_full[OBS]
+
+# Number the behaviors per behavior per rat
+data_full['beh_num'] = data_full.groupby('beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+
+# Number the behaviors backwards
+data_full = data_full.sort_values(by=[OBS,TIME], ascending = False)
+data_full['beh_num_back'] = data_full.groupby('beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+data_full = data_full.sort_values(by=[OBS,TIME])
+
+# Number the ejaculation series per rat (with 10 as last series)
+data_full['ejac_serie']=np.where(data_full[BEH]==BC, data_full['beh_num'],np.NaN)
+data_full['ejac_serie1']=np.where(data_full['obs_num']==1, 10, data_full['ejac_serie'])
+
+# Number the ejaculation series per rat (with 10 as last series)
+data_full['ejac_serie2']=data_full['ejac_serie1']
+data_full['ejac_serie2'].fillna(method = "ffill", inplace=True)
+
+data_full['ejac_serie3']=data_full['ejac_serie1']+1
+
+# Make the first behavior belong to 1st ejaculatory series
+data_full['ejac_serie_filled_pre']=np.where(data_full[BEH]==BC, data_full['beh_num'],np.NaN)
+data_full['ejac_serie_filled_pre']=np.where(data_full['obs_num']==1, 10, data_full['ejac_serie_filled_pre'])
+data_full['ejac_serie_filled_pre'].fillna(method = "backfill", inplace=True)
+data_full['ejac_serie_filled_pre']=np.where(data_full['ejac_serie_filled_pre']>0.5,data_full['ejac_serie_filled_pre'],(data_full['ejac_serie2']+1))
+
+data_full['ejac_serie_filled_pre2']=np.where((data_full['ejac_serie_filled_pre'] + data_full['obs_num']==11), 1, 
+            data_full['ejac_serie_filled_pre'])
+data_full['ejac_serie_filled_pre2'].fillna(method = "ffill", inplace=True)
+
+# Correct ejac_serie_filled_pre to remove the 10
+data_full['ejac_serie_filled']=np.where(data_full['ejac_serie_filled_pre']==10, (data_full['ejac_serie2']+1),data_full['ejac_serie_filled_pre'])
+data_full['ejac_serie_filled']=np.where(data_full['ejac_serie_filled']==11, 1,data_full['ejac_serie_filled'])
+
+# Make sure the ejaculation comes in both serie dataframes
+data_full['ejac_serie_filled_extra']=np.where(data_full['ejac_serie3']==2, data_full['ejac_serie3'],data_full['ejac_serie_filled'])
+data_full['ejac_serie_filled_extra']=np.where(data_full['ejac_serie3']==3, data_full['ejac_serie3'],data_full['ejac_serie_filled_extra'])
+
+## Make new dataframes for each ejaculatory series
+data_S1 = data_full.loc[(data_full['ejac_serie_filled'] == 1),:]
+data_S2 = data_full.loc[(data_full['ejac_serie_filled'] == 2),:]
+
+## Run the script for each dataframe
+# Create a dictionairy of dataframes
+# Loop the rest over the dataframes
+
+def dataprep (data):
+    # def dataprep (data):
+    "This definition will prepare all columns that are later needed to retrieve the results"
+
+    # Mark beginning per rat
+    data['obs_num'] = data.groupby(OBS)[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    data = data.sort_values(by=[OBS,TIME], ascending = False)
+    data['obs_num_back'] = data.groupby(OBS)[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # Make a new column that makes an unique name for the behaviors per rat
+    data['beh_num_trick'] = data[BEH].map(str) + data[OBS]
+    
+    # Number the behaviors per behavior per rat
+    data['beh_num'] = data.groupby('beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    
+    # Number the behaviors backwards
+    data = data.sort_values(by=[OBS,TIME], ascending = False)
+    data['beh_num_back'] = data.groupby('beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # Mark the copulations (mount, intromission, ejaculation)
+    data['COP_mark']=np.where(((data[BEH]==BA) | (data[BEH]==BB) |(data[BEH]==BC)),1,np.NaN)
+    data['COP_marktime']=np.where(data['COP_mark']==1,data[TIME],np.NaN)
+    
+    # Mark the behaviors that would stop the mount bout ()
+    data['NONCOP_mark']=np.where(((data[BEH]==BI) | (data[BEH]==BJ) | (data[BEH]=='End mount bout')),1,np.NaN)
+    data['NONCOP_marktime']=np.where(data['NONCOP_mark']==1,data[TIME],np.NaN)
+    
+    # Make a column for bout end filled with 1 as long as a mount bout continues and a 2 when it would have ended
+    # Shift the column 1 up to mark the end of mountbout next to copulation
+    data['Bout_end_check']=np.where((data['obs_num'])==1,2,np.NaN)
+    data['Bout_end_check']=np.where((data['obs_num_back'])==1,2,data['Bout_end_check'])
+    data['Bout_end_check']=np.where((data['COP_mark'])==1,1,data['Bout_end_check'])
+    data['Bout_end_check']=np.where((data['NONCOP_mark'])==1,2,data['Bout_end_check'])
+    data['Bout_end_check'].fillna(method="backfill", inplace=True)
+    data['Bout_end_check']=data['Bout_end_check'].shift(-1)
+    
+    # Make a column for bout start filled with 1 as long as a mount bout continues and a 2 when it would have started
+    # Shift the column 1 down to mark the end of mountbout next to copulation
+    data['Bout_start_check']=np.where((data['obs_num'])==1,2,np.NaN)
+    data['Bout_start_check']=np.where((data['obs_num_back'])==1,2,data['Bout_start_check'])
+    data['Bout_start_check']=np.where((data['COP_mark'])==1,1,data['Bout_start_check'])
+    data['Bout_start_check']=np.where((data['NONCOP_mark'])==1,2,data['Bout_start_check'])
+    data['Bout_start_check']=np.where((data[BEH])==BC,2,data['Bout_start_check'])
+    data['Bout_start_check'].fillna(method="ffill", inplace=True)
+    data['Bout_start_check']=data['Bout_start_check'].shift(1)
+    
+    # Mark begin, end or single mount bouts
+    data['Mount_bout_mark']=np.where(((data['COP_mark']==1) & (data['Bout_start_check']==2) 
+                                            & (data['Bout_end_check']==2)),"Single copulation","")
+    data['Mount_bout_mark']=np.where(((data['COP_mark']==1) & (data['Bout_start_check']==2) 
+                                            & (data['Bout_end_check']==1)),"Start mount bout",data['Mount_bout_mark'])
+    data['Mount_bout_mark']=np.where(((data['COP_mark']==1) & (data['Bout_start_check']==1) 
+                                            & (data['Bout_end_check']==2)),"End mount bout",data['Mount_bout_mark'])
+    data['Mount_bout_mark']=np.where(((data['Mount_bout_mark']=="Start mount bout") & (data[BEH]==BC)), 
+                                            "Single copulation",data['Mount_bout_mark'])
+
+
+    # Mark each Start mount bout 
+    data['Mount_bout_count_exclsingle']=np.where((data['Mount_bout_mark']=="Start mount bout"),1,np.NaN)
+    data['Mount_bout_count']=np.where(((data['Mount_bout_mark']=="Start mount bout")|(data['Mount_bout_mark']=="Single copulation")),1,np.NaN)
+    
+    # Mark the time of the start and end of each mount bout
+    data['Time_start_mount_bout_exclsingle']=np.where(data['Mount_bout_count_exclsingle']==1,data[TIME],np.NaN)
+    data['Time_start_mount_bout']=np.where(data['Mount_bout_count']==1,data[TIME],np.NaN)
+    data['Time_end_mount_bout_exclsingle']=np.where(data['Mount_bout_mark']=="End mount bout",data[TIME],np.NaN)
+    data['Time_end_mount_bout']=np.where(((data['Mount_bout_mark']=="End mount bout")|(data['Mount_bout_mark']=="Single copulation")),(data[TIME]+data['durations']),np.NaN)
+    # data['Time_end_mount_bout']=np.where((data['Mount_bout_mark']=="End mount bout"),(data['Time_end_mount_bout']+data['durations']),data['Time_end_mount_bout'])
+    
+    data['Time_start_mount_bout']=np.where(data['obs_num']==1,99999,data['Time_start_mount_bout'])
+    data['Time_start_mount_bout'].fillna(method="backfill", inplace=True)
+    data['Time_start_mount_bout']=np.where(data['Time_start_mount_bout']==99999,np.NaN,data['Time_start_mount_bout'])
+    
+    data['Time_start_mount_bout_exclsingle']=np.where(data['obs_num']==1,99999,data['Time_start_mount_bout_exclsingle'])
+    data['Time_start_mount_bout_exclsingle'].fillna(method="backfill", inplace=True)
+    data['Time_start_mount_bout_exclsingle']=np.where(data['Time_start_mount_bout_exclsingle']==99999,np.NaN,data['Time_start_mount_bout_exclsingle'])
+    
+    data['Time_end_mount_bout']=np.where(data['obs_num']==1,99999,data['Time_end_mount_bout'])
+    data['Time_end_mount_bout'].fillna(method="backfill", inplace=True)
+    data['Time_end_mount_bout']=np.where(data['Time_end_mount_bout']==99999,np.NaN,data['Time_end_mount_bout'])
+    
+    data['Time_end_mount_bout_exclsingle']=np.where(data['obs_num']==1,99999,data['Time_end_mount_bout_exclsingle'])
+    data['Time_end_mount_bout_exclsingle'].fillna(method="backfill", inplace=True)
+    data['Time_end_mount_bout_exclsingle']=np.where(data['Time_end_mount_bout_exclsingle']==99999,np.NaN,data['Time_end_mount_bout_exclsingle'])
+    
+   
+    # Get the duration of the mount bout, marked next to the start of the mount bout
+    data['Duration_mount_bout']=np.where((data['Mount_bout_mark']=="Start mount bout")|(data['Mount_bout_mark']=="Single copulation"),
+                                              ((data['Time_end_mount_bout'])-(data['Time_start_mount_bout'])),np.NaN)
+    data['Duration_mount_bout']=np.where((data['Duration_mount_bout']==0),data['durations'],data['Duration_mount_bout'])
+    
+    
+    data['Duration_mount_bout_exclsingle']=np.where(data['Mount_bout_mark']=="Start mount bout",
+                                              ((data['Time_end_mount_bout_exclsingle'])-(data['Time_start_mount_bout_exclsingle'])),np.NaN)
+    
+    # Get column with the start of next mount bout
+    data['Start_next_MB']=data['Time_start_mount_bout'].shift(-1)
+    
+    # Get the duration of the time out
+    data['Duration_time_out']=np.where(((data['Mount_bout_mark']=="Start mount bout")|(data['Mount_bout_mark']=="Single copulation")),
+                                              (data['Start_next_MB']-(data['Time_end_mount_bout'])),np.NaN)
+    
+    # Count the mount bouts
+    data['OBS_MB_count'] = data['Mount_bout_count'].map(str) + data[OBS] 
+    data['Mount_bout_num'] = data.groupby('OBS_MB_count')['Mount_bout_count'].transform(lambda x: np.arange(1, len(x) + 1))
+    
+    # Mark the behaviors in the mount bouts with the number of the mount bout and 555 for single copulation
+    data['Mount_bout']=np.where((data['Mount_bout_mark']=="Start mount bout"),data['Mount_bout_num'],np.NaN)
+    data['Mount_bout']=np.where((data['Mount_bout_mark']=="End mount bout"),99999,data['Mount_bout'])
+    data['Mount_bout'].fillna(method="ffill", inplace=True)
+    data['Mount_bout']=np.where((data['Mount_bout_mark']=="End mount bout"), np.NaN,data['Mount_bout'])
+    data['Mount_bout'].fillna(method="ffill", inplace=True)                                
+    data['Mount_bout']=np.where((data['Mount_bout']==99999),np.NaN,data['Mount_bout'])
+    
+    data['Mount_bout']=np.where((data['Mount_bout_mark']=="Single copulation"),555,data['Mount_bout'])
+    
+    # Calculate the interval between the start of mount bouts
+    data['Interval_MB']=np.where((data['Duration_mount_bout']>0),(data['Start_next_MB']-data['Time_start_mount_bout']),np.NaN)
+    
+    # Make a new column that makes an unique name for the behaviors per rat per ejac serie
+    data['beh_num_trick_serie'] = data[BEH].map(str) + data[OBS] + data['ejac_serie_filled'].map(str)
+    
+    # Number the behaviors per behavior per rat
+    data['beh_num_serie'] = data.groupby('beh_num_trick_serie')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    
+    # Number the behaviors backwards
+    data = data.sort_values(by=[OBS,TIME], ascending = False)
+    data['beh_num_back_serie'] = data.groupby('beh_num_trick_serie')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # Count the mount bouts
+    data['Single_Start_MB_mark']=np.where(((data['Mount_bout_mark']=='Single copulation')|(data['Mount_bout_mark']=='Start mount bout')),999,888)
+    data['mb_num_trick']= data[OBS] + data['Single_Start_MB_mark'].map(str)
+    data['mb_num'] = data.groupby('mb_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    data['mb_num']= np.where(((data['Mount_bout_mark']=='Single copulation')|(data['Mount_bout_mark']=='Start mount bout')),data['mb_num'],np.NaN)
+    
+    # Mark end mount bout and fill the columns so that every mount bout has a number
+    data['mb_num_pre']=data['mb_num']
+    data['mb_num_pre'].fillna(method="ffill",inplace=True)
+    data['Mount_bout_marked_pre']=np.where((data['Mount_bout_mark']=='End mount bout'),777,data['mb_num'])
+    data['Mount_bout_marked_pre'].fillna(method="backfill",inplace=True)
+    data['Mount_bout_marked']=np.where((data['Mount_bout_marked_pre']==777),data['mb_num_pre'],data['mb_num'])
+
+    # Drop all rows with empty cells
+    data.dropna(subset=['Mount_bout_marked'], inplace=True)
+    
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # Number the behaviors in a mount bout
+    data['mb_beh_num_trick']= data['beh_num_trick'] + data['Mount_bout_marked'].map(str)
+    data['mb_beh_num'] = data.groupby('mb_beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    data = data.sort_values(by=[OBS,TIME], ascending = False)
+    data['mb_beh_num_back'] = data.groupby('mb_beh_num_trick')[BEH].transform(lambda x: np.arange(1, len(x) + 1))
+    # Mark duration of behavior
+    data['mb_beh_sumdur']=data.groupby('mb_beh_num_trick')['durations'].cumsum()
+                             
+    data = data.sort_values(by=[OBS,TIME])
+    
+    # Make column that backfills the number of behaviors to the first row of a mountbout
+    for b in list_mb_behaviors:
+        data['MB_%s_count'%b]=np.where(((data[BEH]==b)&(data['mb_beh_num']==1)),data['mb_beh_num_back'],np.NaN)
+        data['MB_%s_count'%b]=np.where((((data['Mount_bout_mark']=="End mount bout")|(data['Mount_bout_mark']=='Single copulation'))&
+                                        (data[BEH]!=b)),99999,data['MB_%s_count'%b])
+        data['MB_%s_count'%b].fillna(method="backfill", inplace=True)
+        data['MB_%s_count'%b]=np.where(data['MB_%s_count'%b]==99999,np.NaN,data['MB_%s_count'%b])
+     
+        data['MB_%s_duration'%b] =np.where(((data[BEH]==b)&(data['mb_beh_num']==1)),data['mb_beh_sumdur'],np.NaN)  
+        data['MB_%s_duration'%b]=np.where((((data['Mount_bout_mark']=="End mount bout")|(data['Mount_bout_mark']=='Single copulation'))&
+                                        (data[BEH]!=b)),99999,data['MB_%s_duration'%b])
+        data['MB_%s_duration'%b].fillna(method="backfill", inplace=True)
+        data['MB_%s_duration'%b]=np.where(data['MB_%s_duration'%b]==99999,np.NaN,data['MB_%s_duration'%b])
+     
+
+    return data
+    
+data_S1=dataprep(data_S1)
+data_S2=dataprep(data_S2)
+
+print("dataprep finished")    
+
+
+# # Save the dataframes to excel for check
+# writer5 = pd.ExcelWriter(out_path3, engine='xlsxwriter')
+# data_S1.to_excel(writer5, sheet_name='data_test')
+# writer5.save()
+# writer5.close()
+
+
+# Create new dataframes for data with columns observation, ratID, Treatment, Virus, Experiment
+results_S1 = data_S1[[OBS,RATID,TREAT,EXP,'Mount_bout_mark','Mount_bout_marked']]
+results_S1 = results_S1.set_index(OBS)   
+
+results_S2 = data_S2[[OBS,RATID,TREAT,EXP,'Mount_bout_mark','Mount_bout_marked']]
+results_S2 = results_S2.set_index(OBS)   
+
+# Fill dataframe with new values found in data dataframe
+# Fill in the first behavior
+results_S1['TD_MB']=np.where(((data_S1['Mount_bout_mark']=='Single copulation')|
+                                      (data_S1['Mount_bout_mark']=='Start mount bout')),
+                              data_S1['Duration_mount_bout'],np.NaN)
+results_S1['TD_TO']=np.where(((data_S1['Mount_bout_mark']=='Single copulation')|
+                                      (data_S1['Mount_bout_mark']=='Start mount bout')),
+                              data_S1['Duration_time_out'],np.NaN)
+results_S1['MB_First_Cop']=np.where(((data_S1['Mount_bout_mark']=='Single copulation')|
+                                      (data_S1['Mount_bout_mark']=='Start mount bout')),
+                                    data_S1[BEH],np.NaN)
+results_S1['MB_Last_Cop']=np.where(((data_S1['Mount_bout_mark']=='Single copulation')|
+                                    (data_S1['Mount_bout_mark']=='End mount bout')),
+                                    data_S1[BEH],np.NaN)
+results_S1['MB_Last_Cop'].fillna(method="backfill", inplace=True)
+
+for b in list_mb_behaviors:
+        results_S1['MB_TN_%s'%b]=np.where(data_S1['Mount_bout_count']==1,data_S1['MB_%s_count'%b],np.NaN)
+        results_S1['MB_TD_%s'%b]=np.where(data_S1['Mount_bout_count']==1, data_S1['MB_%s_duration'%b],np.NaN)
+
+results_S1['Mount_bout_mark']=np.where(((results_S1['Mount_bout_mark']=='End mount bout')|(results_S1['Mount_bout_mark']=="")),
+                    np.NaN,results_S1['Mount_bout_mark'])
+results_S1.dropna(subset=['Mount_bout_mark'], inplace=True)
+results_S1['Mount_bout_mark']=np.where(results_S1['Mount_bout_mark']=='Single copulation','SC','MB')
+
+# Make sheet nicer
+results_S1['MB_First_Cop']=results_S1['MB_First_Cop'].replace('Mount','M')
+results_S1['MB_First_Cop']=results_S1['MB_First_Cop'].replace('Intromission','I')
+results_S1['MB_First_Cop']=results_S1['MB_First_Cop'].replace('Ejaculation','E')
+results_S1['MB_Last_Cop']=results_S1['MB_Last_Cop'].replace('Mount','M')
+results_S1['MB_Last_Cop']=results_S1['MB_Last_Cop'].replace('Intromission','I')
+results_S1['MB_Last_Cop']=results_S1['MB_Last_Cop'].replace('Ejaculation','E')
+
+results_S1.fillna(0, inplace=True)
+
+results_S1.columns=['RatID', 'Treatment', 'Experiment',
+        'MB_type', 'MB_number', 'TD_MB', 'TD_TO',
+        'MB_First_Cop', 'MB_Last_Cop', 'MB_TN_M', 'MB_TD_M','MB_TN_I','MB_TD_I',
+        'MB_TN_E','MB_TD_E','MB_TN_genigroom','MB_TD_genigroom']
+
+results_S1['MB_TN_cop']=results_S1['MB_TN_M']+results_S1['MB_TN_I']+results_S1['MB_TN_E']
+results_S1['MB_TD_cop']=results_S1['MB_TD_M']+results_S1['MB_TD_I']+results_S1['MB_TD_E']
+results_S1['MB_IR']=np.where(results_S1['MB_type']=='MB',(results_S1['MB_TN_I']/(results_S1['MB_TN_M']+results_S1['MB_TN_I'])),np.NaN)
+results_S1['MB_III']=np.where(results_S1['MB_type']=='MB',(results_S1['TD_MB']/results_S1['MB_TN_I']),np.NaN)
+results_S1['MB_CR']=np.where(results_S1['MB_type']=='MB',(results_S1['MB_TN_cop']/results_S1['TD_MB']),np.NaN)
+results_S1['MB_ICI']=np.where(results_S1['MB_type']=='MB',(results_S1['TD_MB']/results_S1['MB_TN_cop']),np.NaN)
+results_S1['MB_TO/MB_TD']=results_S1['TD_TO']/results_S1['TD_MB']
+results_S1['MB_TO/TD_cop']=results_S1['TD_TO']/results_S1['MB_TN_cop']
+results_S1['MB_TO/IR']=results_S1['TD_TO']/results_S1['MB_IR']
+results_S1['MB_TO/III']=results_S1['TD_TO']/results_S1['MB_III']
+results_S1['MB_TO/CR']=results_S1['TD_TO']/results_S1['MB_CR']
+
+results_S1=results_S1[['RatID', 'Treatment', 'Experiment', 'MB_type',
+       'MB_number', 'TD_MB', 'TD_TO', 'MB_First_Cop', 'MB_Last_Cop', 'MB_TN_M',
+       'MB_TN_I', 'MB_TN_E', 'MB_TN_genigroom', 'MB_TN_cop', 'MB_TD_cop', 'MB_IR',
+       'MB_III', 'MB_CR', 'MB_ICI', 'MB_TO/MB_TD', 'MB_TO/TD_cop', 'MB_TO/IR',
+       'MB_TO/III', 'MB_TO/CR','MB_TD_M','MB_TD_I','MB_TD_E','MB_TD_genigroom']]
+
+# Repeat for S2
+results_S2['TD_MB']=np.where(((data_S2['Mount_bout_mark']=='Single copulation')|
+                                      (data_S2['Mount_bout_mark']=='Start mount bout')),
+                              data_S2['Duration_mount_bout'],np.NaN)
+results_S2['TD_TO']=np.where(((data_S2['Mount_bout_mark']=='Single copulation')|
+                                      (data_S2['Mount_bout_mark']=='Start mount bout')),
+                              data_S2['Duration_time_out'],np.NaN)
+results_S2['MB_First_Cop']=np.where(((data_S2['Mount_bout_mark']=='Single copulation')|
+                                      (data_S2['Mount_bout_mark']=='Start mount bout')),
+                                    data_S2[BEH],np.NaN)
+results_S2['MB_Last_Cop']=np.where(((data_S2['Mount_bout_mark']=='Single copulation')|
+                                    (data_S2['Mount_bout_mark']=='End mount bout')),
+                                    data_S2[BEH],np.NaN)
+results_S2['MB_Last_Cop'].fillna(method="backfill", inplace=True)
+
+for b in list_mb_behaviors:
+        results_S2['MB_TN_%s'%b]=np.where(data_S2['Mount_bout_count']==1,data_S2['MB_%s_count'%b],np.NaN)
+        results_S2['MB_TD_%s'%b]=np.where(data_S2['Mount_bout_count']==1, data_S2['MB_%s_duration'%b],np.NaN)
+
+results_S2['Mount_bout_mark']=np.where(((results_S2['Mount_bout_mark']=='End mount bout')|(results_S2['Mount_bout_mark']=="")),
+                    np.NaN,results_S2['Mount_bout_mark'])
+results_S2.dropna(subset=['Mount_bout_mark'], inplace=True)
+results_S2['Mount_bout_mark']=np.where(results_S2['Mount_bout_mark']=='Single copulation','SC','MB')
+
+# Make sheet nicer
+results_S2['MB_First_Cop']=results_S2['MB_First_Cop'].replace('Mount','M')
+results_S2['MB_First_Cop']=results_S2['MB_First_Cop'].replace('Intromission','I')
+results_S2['MB_First_Cop']=results_S2['MB_First_Cop'].replace('Ejaculation','E')
+results_S2['MB_Last_Cop']=results_S2['MB_Last_Cop'].replace('Mount','M')
+results_S2['MB_Last_Cop']=results_S2['MB_Last_Cop'].replace('Intromission','I')
+results_S2['MB_Last_Cop']=results_S2['MB_Last_Cop'].replace('Ejaculation','E')
+
+results_S2.fillna(0, inplace=True)
+
+results_S2.columns=['RatID', 'Treatment', 'Experiment',
+        'MB_type', 'MB_number', 'TD_MB', 'TD_TO',
+        'MB_First_Cop', 'MB_Last_Cop', 'MB_TN_M', 'MB_TD_M','MB_TN_I','MB_TD_I',
+        'MB_TN_E','MB_TD_E','MB_TN_genigroom','MB_TD_genigroom']
+
+results_S2['MB_TN_cop']=results_S2['MB_TN_M']+results_S2['MB_TN_I']+results_S2['MB_TN_E']
+results_S2['MB_TD_cop']=results_S2['MB_TD_M']+results_S2['MB_TD_I']+results_S2['MB_TD_E']
+results_S2['MB_IR']=np.where(results_S2['MB_type']=='MB',(results_S2['MB_TN_I']/(results_S2['MB_TN_M']+results_S2['MB_TN_I'])),np.NaN)
+results_S2['MB_III']=np.where(results_S2['MB_type']=='MB',(results_S2['TD_MB']/results_S2['MB_TN_I']),np.NaN)
+results_S2['MB_CR']=np.where(results_S2['MB_type']=='MB',(results_S2['MB_TN_cop']/results_S2['TD_MB']),np.NaN)
+results_S2['MB_ICI']=np.where(results_S2['MB_type']=='MB',(results_S2['TD_MB']/results_S2['MB_TN_cop']),np.NaN)
+results_S2['MB_TO/MB_TD']=results_S2['TD_TO']/results_S2['TD_MB']
+results_S2['MB_TO/TD_cop']=results_S2['TD_TO']/results_S2['MB_TN_cop']
+results_S2['MB_TO/IR']=results_S2['TD_TO']/results_S2['MB_IR']
+results_S2['MB_TO/III']=results_S2['TD_TO']/results_S2['MB_III']
+results_S2['MB_TO/CR']=results_S2['TD_TO']/results_S2['MB_CR']
+
+results_S2=results_S2[['RatID', 'Treatment', 'Experiment', 'MB_type',
+       'MB_number', 'TD_MB', 'TD_TO', 'MB_First_Cop', 'MB_Last_Cop', 'MB_TN_M',
+       'MB_TN_I', 'MB_TN_E', 'MB_TN_genigroom', 'MB_TN_cop', 'MB_TD_cop', 'MB_IR',
+       'MB_III', 'MB_CR', 'MB_ICI', 'MB_TO/MB_TD', 'MB_TO/TD_cop', 'MB_TO/IR',
+       'MB_TO/III', 'MB_TO/CR','MB_TD_M','MB_TD_I','MB_TD_E','MB_TD_genigroom']]
+            
+
+# # Make a sheet to explain the columns
+data_info=pd.DataFrame()
+
+data_info['Code']=('RatID', 'Treatment', 'Experiment', 'MB_type',
+        'MB_number', 'TD_MB', 'TD_TO', 'MB_First_Cop', 'MB_Last_Cop', 'MB_TN_M',
+        'MB_TN_I', 'MB_TN_E', 'MB_TN_genigroom', 'MB_TN_cop', 'MB_TD_cop', 'MB_IR',
+        'MB_III', 'MB_CR', 'MB_ICI', 'MB_TO/MB_TD', 'MB_TO/TD_cop', 'MB_TO/IR',
+        'MB_TO/III', 'MB_TO/CR','MB_TD_M','MB_TD_I','MB_TD_E','MB_TD_genigroom')
+
+data_info['Explanation']=('RatID',
+                    'Treatment',
+                    'Experiment',
+                    'Type of mount bout (SC=single copulation,MB=more copulations',
+                    'The number of the mount bout (inclusief single copulations)',
+                    'Total duration of this mount bout',
+                    'Total duration of the time out after this mount bout',
+                    'First copulation type of this mount bout',
+                    'Last copulation type of this mount bout (same as first in case of SC)',
+                    'Total number of mounts in this mount bout',
+                    'Total number of intromissions in this mount bout',
+                    'Total number of ejaculations in this mount bout',
+                    'Total number of genital grooming in this mount bout',
+                    'Total number of copulations (M+I+E) in this mount bout',
+                    'Total duration of copulations (M+I+E)in this mount bout',
+                    'Intromission ratio = I/(I+M) in this mount bout (only for MB, not SC)',
+                    'Inter intromission interval = Total time test (all results) or ejaculation latency (series)/ number o,f intromissions in this mount bout (only for MB, not SC)',
+                    'Copulatory rate = (M+I+E)/Total time test (all results) or ejaculation latency (series) in this mount bout (only for MB, not SC)',
+                    'Inter copulatory interval = duration MB/TN copulations (only for MB, not SC)',
+                    'Time-out/mount bout duration',
+                    'Time-out / TD copulations ',
+                    'Time-out/ Intromission Ration of the mount bout',
+                    'Time-out/ inter intromission interval of the mount bout',
+                    'Time-out/ copulation rate of the mount bout',
+                    'Total duration mounts',
+                    'Total duration intromissions',
+                    'Total duration ejaculations',
+                    'Total duration genital grooming')
+
+print("results finished")
+
+# Save the dataframes to excel
+dfs_print={'Information':data_info,'Results_S1':results_S1,'Results_S2':results_S2}
+
+# Write stats to excel file:
+writer1 = pd.ExcelWriter(out_path1, engine='xlsxwriter')
+for sheetname, df in dfs_print.items():  # loop through `dict` of dataframes
+    df.to_excel(writer1, sheet_name=sheetname, index=False)  # send df to writer
+    worksheet = writer1.sheets[sheetname]  # pull worksheet object
+    for idx, col in enumerate(df):  # loop through all columns
+        series = df[col]
+        max_len = max((
+            series.astype(str).map(len).max(),  # len of largest item
+            len(str(series.name))  # len of column name/header
+            )) + 1  # adding a little extra space
+        worksheet.set_column(idx, idx, max_len)  # set column width
+writer1.save()
+writer1.close()
+
+
+
+
+    
+    
+  
